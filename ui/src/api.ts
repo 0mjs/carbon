@@ -28,7 +28,7 @@ export type App = {
 
 export type Git = { branch: string; last: number; subject: string; changes: number }
 /** One or more apps that belong together */
-export type Project = { key: string; name: string; group: string; description: string | null; apps: string[] }
+export type Project = { key: string; name: string; title: string; group: string; description: string | null; apps: string[] }
 
 export type Slot = {
   port: number

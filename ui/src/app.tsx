@@ -218,7 +218,7 @@ function ProjectCard({ project, apps, slots }: { project: Project; apps: App[]; 
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="flex items-center gap-2 text-[15px] font-medium tracking-tight">
-            <span className="truncate">{project.name}</span>
+            <span className="truncate">{project.title}</span>
             {live > 0 && <span className="font-mono text-[11px] font-normal text-on">{live} live</span>}
           </h3>
           <p className="truncate font-mono text-[11px] text-faint">~/{project.group}</p>

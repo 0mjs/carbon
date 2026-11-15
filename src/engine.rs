@@ -28,6 +28,7 @@ use tokio::{
 
 use crate::agents::{self, Proc};
 use crate::detect::{self, Plan};
+use crate::identity;
 use crate::places;
 
 pub const HUB_PORT: u16 = 3000;
@@ -96,7 +97,15 @@ pub struct Git {
 pub struct Project {
     /// "<group>/<name>"
     pub key: String,
+    /// Its folder's name
     pub name: String,
+    /// What to call it: the name it was given by hand, else the one its manifest gives, else its folder's
+    pub title: String,
+    /// A picture of it: the logo it was given by hand, else the icon it ships
+    pub logo: Option<PathBuf>,
+    /// Whether the title and the logo were given by hand
+    pub renamed: bool,
+    pub logo_chosen: bool,
     /// The folder it is in, relative to home
     pub group: String,
     /// What it says it is, from its manifest or README
@@ -228,6 +237,7 @@ pub struct Hub {
     roots: Mutex<Option<(Instant, Vec<PathBuf>)>>,
     groups: Mutex<Vec<String>>,
     git: Mutex<HashMap<PathBuf, (Instant, Option<Git>)>>,
+    found: Mutex<HashMap<PathBuf, (Instant, identity::Found)>>,
     previews: Mutex<HashMap<u16, Preview>>,
     me: PathBuf,
     pub mise: Option<PathBuf>,
@@ -442,6 +452,7 @@ impl Hub {
             roots: Mutex::new(None),
             groups: Mutex::new(Vec::new()),
             git: Mutex::new(HashMap::new()),
+            found: Mutex::new(HashMap::new()),
             previews: Mutex::new(HashMap::new()),
             // Where Carbon's own source lives, so it never lists itself as something to run
             me: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
@@ -549,6 +560,29 @@ impl Hub {
 
     pub fn forget(&self) {
         *self.cache.lock().unwrap() = None;
+    }
+
+    /// The name and logo a project ships, looked for again every few minutes: icons don't come and go
+    fn found(&self, project: &Path) -> identity::Found {
+        let mut found = self.found.lock().unwrap();
+        match found.get(project) {
+            Some((when, known)) if when.elapsed() < Duration::from_secs(300) => known.clone(),
+            _ => {
+                let fresh = identity::find(project);
+                found.insert(project.to_path_buf(), (Instant::now(), fresh.clone()));
+                fresh
+            }
+        }
+    }
+
+    /// Gives a project a name; an empty one goes back to the name it has by itself
+    pub fn rename(&self, key: &str, name: &str) -> Result<(), String> {
+        identity::rename(&self.home, key, name)
+    }
+
+    /// Gives a project a logo from an image file; none goes back to the icon it ships
+    pub fn set_logo(&self, key: &str, image: Option<&Path>) -> Result<(), String> {
+        identity::set_logo(&self.home, key, image)
     }
 
     /// The places code lives on this machine. Worked out from the home folder (or read from the config) and kept
@@ -1212,6 +1246,8 @@ impl Hub {
             app.git = self.git(&app.dir).await;
         }
         // Apps gathered into their projects, each project saying what it is
+        let chosen = identity::chosen(&self.home);
+        let logos = identity::logos(&self.home);
         let mut projects: Vec<Project> = Vec::new();
         for app in &apps {
             let key = if app.group.is_empty() {
@@ -1224,7 +1260,18 @@ impl Hub {
                 None => {
                     // Only what the project itself says: a part's README describes the part, not the whole
                     let places = [app.project_dir.as_path()];
+                    let found = self.found(&app.project_dir);
+                    let given = chosen.get(&key);
+                    let name = given.and_then(|g| g.name.clone());
+                    let logo = given
+                        .and_then(|g| g.logo.as_ref())
+                        .map(|file| logos.join(file))
+                        .filter(|path| path.is_file());
                     projects.push(Project {
+                        renamed: name.is_some(),
+                        logo_chosen: logo.is_some(),
+                        title: name.or(found.name).unwrap_or_else(|| app.project.clone()),
+                        logo: logo.or(found.logo),
                         key,
                         name: app.project.clone(),
                         group: app.group.clone(),

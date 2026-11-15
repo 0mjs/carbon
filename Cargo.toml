@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "carbon"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 description = "The local hub for everything in ~/dev: always on port 3000, it starts, stops and shows every dev server"
 

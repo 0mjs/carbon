@@ -1,6 +1,6 @@
 [package]
 name = "carbon-desktop"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "Carbon as a desktop app: the hub and its dashboard in a native window, drawn with Rune"
 
@@ -11,5 +11,5 @@ path = "src/main.rs"
 [dependencies]
 carbon = { path = ".." }
 # Pre-release: pinned to one revision of its dev branch, the same one the workspace patches use
-rune = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91", features = ["tooling"] }
+rune = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91", features = ["tooling", "native-file-dialog"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
