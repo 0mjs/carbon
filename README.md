@@ -1,20 +1,14 @@
 # Carbon
 
 A desktop app, a command, and a dashboard for the dev servers on your machine. It finds your projects by itself,
-is always on **http://localhost:3000**, and decides what runs on the ports next to it:
+is always on **http://localhost:3000**, and gives every app a port of its own.
 
-| Port | What runs there |
-| --- | --- |
-| 3000 | Carbon |
-| 3001 | Website: a project's site (`web`, `website`, `site`, `frontend`, or the project itself) |
-| 3002 | Admin: a folder named `admin` or `backoffice` |
-| 3003 | Pro: a folder named `pro`, `dashboard`, `console` or `portal` |
-| 3004–3019 | Everything else, one port each |
+The first time Carbon sees an app it picks a port for it at random, between 4100 and 4999, and remembers it: the
+app is at that address from then on, and no two apps want the same one, so everything can run at once. Before an
+app is started its port is checked. If something else is on it, the app is given another port rather than pushing
+that aside. What each app was given is in `~/.config/carbon/ports.json`.
 
-Running an app puts it on its port and stops whatever was there, so the same kind of thing is always at the same
-address.
-
-Carbon is early: this is 0.0.2. It is built and used on macOS; the engine and the app are written to be portable,
+Carbon is early: this is 0.0.3. It is built and used on macOS; the engine and the app are written to be portable,
 but Linux and Windows are untried.
 
 ## Three ways in
@@ -91,15 +85,14 @@ optional:
 {
   "roots": ["~/work", "~/Documents/code"],
   "hidden": ["~/work/old-site"],
-  "roles": { "~/work/shop/coach": "pro" },
   "browser": "Helium",
   "window": "fullscreen"
 }
 ```
 
-`roots` says exactly where to look, `hidden` leaves projects out, `roles` puts a folder on a particular port (`website`, `admin`, `pro` or
-`other`), `browser` chooses what links open in (the system's default without it), and `window` opens the app's
-window `fullscreen` or `maximized` (at its own size without it).
+`roots` says exactly where to look, `hidden` leaves projects out, `browser` chooses what links open in (the
+system's default without it), and `window` opens the app's window `fullscreen` or `maximized` (at its own size
+without it).
 
 ## Projects, names, logos and previews
 

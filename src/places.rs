@@ -9,12 +9,11 @@
 //!   ~/code/thing/web        a part of that project
 //!   ~/dev/work/thing        the same, one level down: "work" has no project markers, so it is a group of projects
 //!
-//! `~/.config/carbon/config.json` can override what was worked out: `roots` to say exactly where to look, `roles`
-//! to put a folder on a particular port, `hidden` to leave projects out, `browser` to choose what opens links, and
-//! `window` for how the desktop app's window opens. The app's setup page writes `roots` and `hidden`.
+//! `~/.config/carbon/config.json` can override what was worked out: `roots` to say exactly where to look, `hidden`
+//! to leave projects out, `browser` to choose what opens links, and `window` for how the desktop app's window
+//! opens. The app's setup page writes `roots` and `hidden`.
 
 use std::{
-    collections::HashMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -63,8 +62,6 @@ const WORKSPACES: [&str; 4] = ["apps", "packages", "services", "sites"];
 #[derive(Default, Deserialize)]
 struct RawConfig {
     roots: Option<Vec<String>>,
-    #[serde(default)]
-    roles: HashMap<String, String>,
     browser: Option<String>,
     window: Option<String>,
     #[serde(default)]
@@ -75,8 +72,6 @@ struct RawConfig {
 pub struct Config {
     /// Exactly where to look, instead of working it out
     pub roots: Option<Vec<PathBuf>>,
-    /// Folders given a role by hand: "website", "admin", "pro" or "other"
-    pub roles: HashMap<PathBuf, String>,
     /// The app links open in, e.g. "Helium". Without it, the system's default browser
     pub browser: Option<String>,
     /// How the desktop app's window opens: "fullscreen" or "maximized". Without it, at its own size
@@ -133,11 +128,6 @@ pub fn config(home: &Path) -> Config {
         roots: raw
             .roots
             .map(|roots| roots.iter().map(|r| expand(home, r)).collect()),
-        roles: raw
-            .roles
-            .iter()
-            .map(|(path, role)| (expand(home, path), role.clone()))
-            .collect(),
         browser: raw.browser,
         window: raw.window,
         hidden: raw.hidden.iter().map(|h| expand(home, h)).collect(),
@@ -372,16 +362,13 @@ mod tests {
             "Documents/code/app/package.json",
             ".config/carbon/config.json",
         ]);
-        fs::write(home.join(".config/carbon/config.json"), r#"{"roots":["~/Documents/code"],"roles":{"~/Documents/code/app":"pro"},"browser":"Safari"}"#).unwrap();
+        fs::write(
+            home.join(".config/carbon/config.json"),
+            r#"{"roots":["~/Documents/code"],"browser":"Safari"}"#,
+        )
+        .unwrap();
         let config = config(&home);
         assert_eq!(roots(&home, &config), vec![home.join("Documents/code")]);
-        assert_eq!(
-            config
-                .roles
-                .get(&home.join("Documents/code/app"))
-                .map(String::as_str),
-            Some("pro")
-        );
         assert_eq!(config.browser.as_deref(), Some("Safari"));
 
         // What setup chooses is written beside what was there, which stays

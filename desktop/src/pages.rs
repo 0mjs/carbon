@@ -12,8 +12,8 @@ use rune::{
 use crate::{
     Page, State, hub,
     look::{
-        Kind, Look, agent_mark, button, chip, dot, hue, letter, mark, mono, plain_button, raised,
-        sans, tech_chip, tech_mark, tile,
+        Kind, Look, agent_mark, aura, button, chip, dot, hue, letter, lit, mark, mono,
+        plain_button, raised, sans, tech_chip, tech_mark, tile, tone,
     },
     model::{self, Origin, Server},
 };
@@ -121,7 +121,7 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
     let port = server.port;
     let (pid, slot) = (server.pid, server.slot);
     let project = server.app.and_then(|app| model::project_of(snap, app));
-    // Something Carbon doesn't know as a project goes by the folder it runs in, with the whole path beside its port
+    // Something Carbon doesn't know as a project goes by the folder it runs in
     let title = project.map_or_else(
         || {
             server
@@ -134,28 +134,30 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
         },
         |project| project.title.clone(),
     );
-    let address = match (project, server.app.and_then(|app| app.part.as_deref())) {
-        (_, Some(part)) => format!("{} on localhost:{port}", model::named(part)),
-        (Some(_), None) => format!("localhost:{port}"),
-        (None, None) => format!("localhost:{port}, {}", server.what),
+    let about = match (project, server.app.and_then(|app| app.part.as_deref())) {
+        (_, Some(part)) => model::named(part),
+        (Some(_), None) => String::new(),
+        (None, None) => server.what.clone(),
     };
     let face = match project {
         Some(project) => tile(s, project, 34.0, l),
         None => letter(&title, &title, 34.0, 8.0),
     };
-    let mut name = row().gap(11.0).center_y().child(face).child(
-        col()
-            .grow(1.0)
-            .min_w(0.0)
-            .gap(1.0)
-            .child(text(title).font(sans(14.0, 600.0)).color(l.ink).truncate())
-            .child(
-                text(address)
-                    .font(sans(12.5, 400.0))
-                    .color(l.soft)
-                    .truncate(),
-            ),
-    );
+    let mut words = col()
+        .grow(1.0)
+        .min_w(0.0)
+        .gap(1.0)
+        .child(text(title).font(sans(14.0, 600.0)).color(l.ink).truncate());
+    if !about.is_empty() {
+        words = words.child(text(about).font(sans(12.5, 400.0)).color(l.soft).truncate());
+    }
+    let mut name = row()
+        .gap(11.0)
+        .center_y()
+        .grow(1.0)
+        .min_w(0.0)
+        .child(face)
+        .child(words);
     // The name leads to the project
     if let Some(project) = project {
         let page = Page::Project(project.key.clone());
@@ -165,45 +167,71 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
             .on_press(move |s: &mut State| s.go(page.clone()));
     }
 
-    raised(col().key(format!("server-{port}")), l.card, 16.0, l)
-        .child(
-            picture(s, server, l)
-                .w_full()
-                .aspect_ratio(1.6)
-                .corners([15.0, 15.0, 0.0, 0.0]),
-        )
-        .child(
-            col()
-                .padding(14.0)
-                .gap(12.0)
-                .child(name)
-                .child(who(s, server, l))
-                .child(
-                    row()
-                        .gap(8.0)
-                        .child(
-                            button(
-                                format!("stop-{port}"),
-                                "Stop",
-                                Kind::Quiet,
-                                s.busy.is_none(),
-                                l,
-                                move |s: &mut State| stop(s, port, pid, slot),
-                            )
-                            .grow(1.0),
+    let surface = col().key(format!("server-{port}"));
+    let card = match tone(server.status, l) {
+        Some(tone) => lit(surface, l.card, 16.0, tone, l),
+        None => raised(surface, l.card, 16.0, l),
+    };
+    card.child(
+        picture(s, server, l)
+            .w_full()
+            .aspect_ratio(1.6)
+            .corners([15.0, 15.0, 0.0, 0.0]),
+    )
+    .child(
+        col()
+            .padding(14.0)
+            .gap(12.0)
+            .child(
+                row()
+                    .gap(10.0)
+                    .center_y()
+                    .child(name)
+                    .child(address(port, l)),
+            )
+            .child(who(s, server, l))
+            .child(
+                row()
+                    .gap(8.0)
+                    .child(
+                        button(
+                            format!("stop-{port}"),
+                            "Stop",
+                            Kind::Quiet,
+                            s.busy.is_none(),
+                            l,
+                            move |s: &mut State| stop(s, port, pid, slot),
                         )
-                        .child(
-                            button(
-                                format!("open-{port}"),
-                                "Open",
-                                Kind::Main,
-                                server.live(),
-                                l,
-                                move |_: &mut State| open(port),
-                            )
-                            .grow(1.0),
-                        ),
-                ),
+                        .grow(1.0),
+                    )
+                    .child(
+                        button(
+                            format!("open-{port}"),
+                            "Open",
+                            Kind::Main,
+                            server.live(),
+                            l,
+                            move |_: &mut State| open(port),
+                        )
+                        .grow(1.0),
+                    ),
+            ),
+    )
+}
+
+/// A port as an address, the way a terminal would print it
+fn address(port: u16, l: &Look) -> El {
+    row()
+        .h(24.0)
+        .px(9.0)
+        .center()
+        .radius(8.0)
+        .fill(l.well)
+        .border(1.0, l.line)
+        .child(
+            text(format!("localhost:{port}"))
+                .font(mono(11.5))
+                .color(l.soft),
         )
 }
 
@@ -219,11 +247,11 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
             .window_drag()
             .center()
             .gap(6.0)
-            .child(mark(s, "carbon", 52.0, l))
-            .child(el().h(10.0))
+            .child(mark(s, "carbon", 56.0, l).shadow(0.0, 40.0, l.ink.alpha(0.12)))
+            .child(el().h(12.0))
             .child(
                 text("Nothing is running")
-                    .font(sans(18.0, 600.0))
+                    .font(sans(19.0, 600.0))
                     .color(l.ink),
             )
             .child(
@@ -247,8 +275,15 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
         .pb(22.0)
         .gap(4.0)
         .window_drag()
+        // The machine is on: a little green in the air
+        .child(aura(
+            el().size(48.0, 48.0).radius(24.0).fill(l.live),
+            30.0,
+            10.0,
+            0.16,
+        ))
         .child(text("Running").font(sans(26.0, 600.0)).color(l.ink))
-        .child(text(note).font(sans(13.0, 400.0)).color(l.soft));
+        .child(text(note).font(sans(13.0, 400.0)).color(l.ink.alpha(0.66)));
     col()
         .key("running")
         .grow(1.0)
@@ -276,32 +311,22 @@ fn standing(app: &App) -> Option<String> {
 }
 
 /// What an app is doing, in a sentence
-fn doing(app: &App, mine: &[&Server], servers: &[Server], snap: &Snapshot) -> String {
+fn doing(app: &App, mine: &[&Server], servers: &[Server]) -> String {
     let Some(server) = mine.first() else {
-        // Something else on its port is worth saying before it is replaced
-        let there = servers.iter().find(|other| other.port == app.port);
-        return match there {
-            Some(other) => {
-                let name = other
-                    .app
-                    .and_then(|a| model::project_of(snap, a))
-                    .map_or("something else", |p| p.title.as_str());
-                format!(
-                    "Runs on localhost:{}, where {name} is now. Running this takes its place.",
-                    app.port
-                )
-            }
-            None => format!("Runs on localhost:{}", app.port),
+        // Something else on its port is worth saying: Run will move it rather than push that aside
+        return match servers.iter().any(|other| other.port == app.port) {
+            true => "Something else is on its port, so Run will give it another.".into(),
+            false => "Not running".into(),
         };
     };
     match server.status {
-        "starting" => format!("Starting on localhost:{}", server.port),
+        "starting" => "Starting".into(),
         "exited" => "Stopped by itself".into(),
         _ => {
-            let mut says = format!("Live on localhost:{}", server.port);
-            if let Some(since) = server.since {
-                says += &format!(", up {}", model::up(since));
-            }
+            let mut says = match server.since {
+                Some(since) => format!("Live, up {}", model::up(since)),
+                None => "Live".to_string(),
+            };
             match &server.origin {
                 Origin::Agent(agent) => {
                     says += &format!(", started by {}", by(agent));
@@ -347,14 +372,7 @@ fn output(s: &State, l: &Look) -> El {
         )
 }
 
-fn app_card(
-    s: &State,
-    snap: &Snapshot,
-    servers: &[Server],
-    project: &Project,
-    app: &App,
-    l: &Look,
-) -> El {
+fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Look) -> El {
     let mine: Vec<&Server> = servers
         .iter()
         .filter(|server| server.app.is_some_and(|a| a.id == app.id))
@@ -391,8 +409,11 @@ fn app_card(
         None => title.child(chip(app.kind, l)),
     };
 
-    // What can be done with it, on the right, with the thing to press last
-    let mut buttons = row().gap(8.0).center_y();
+    // Where it is, then what can be done with it, with the thing to press last
+    let mut buttons = row()
+        .gap(8.0)
+        .center_y()
+        .child(address(first.map_or(app.port, |server| server.port), l));
     match first {
         None => {
             let starting = s.busy.as_deref() == Some(format!("start:{id}").as_str());
@@ -469,7 +490,7 @@ fn app_card(
         .gap(6.0)
         .child(row().gap(12.0).center_y().child(title).child(buttons))
         .child(
-            text(doing(app, &mine, servers, snap))
+            text(doing(app, &mine, servers))
                 .font(sans(13.0, 400.0))
                 .color(l.soft)
                 .wrap(),
@@ -503,10 +524,13 @@ fn app_card(
                 .border(1.0, l.line),
         );
     }
-    let mut card = raised(col().key(format!("app-{}", app.id)), l.card, 16.0, l)
-        .padding(18.0)
-        .gap(14.0)
-        .child(top.child(about));
+    // A card with something on it is lit in that thing's colour
+    let surface = col().key(format!("app-{}", app.id));
+    let card = match tone(status, l) {
+        Some(tone) => lit(surface, l.card, 16.0, tone, l),
+        None => raised(surface, l.card, 16.0, l),
+    };
+    let mut card = card.padding(18.0).gap(14.0).child(top.child(about));
 
     // The same app serving somewhere else as well: an agent's copy beside Carbon's, say
     for server in mine.iter().skip(1) {
@@ -623,7 +647,6 @@ fn changing(s: &State, project: &Project, l: &Look) -> El {
 
 /// Light behind a project's name, in the project's own colours: its logo, far out of focus
 fn glow(s: &State, project: &Project) -> El {
-    // The renderer blurs by a limited amount, so a small blurred copy is drawn large
     let small = el().size(48.0, 48.0);
     let light = match s.logos.get(&project.key) {
         Some((_, logo)) => small.pixels_fit(logo.pixels(), SurfaceFit::Fill),
@@ -631,12 +654,7 @@ fn glow(s: &State, project: &Project) -> El {
             .radius(24.0)
             .fill(oklch(0.62, 0.16, hue(&project.key))),
     };
-    el().key("glow")
-        .size(48.0, 48.0)
-        .absolute(40.0, 38.0)
-        .scale(7.0)
-        .opacity(0.32)
-        .child(light.blur(9.0))
+    aura(light, 40.0, 38.0, 0.34)
 }
 
 pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project, l: &Look) -> El {
@@ -645,8 +663,17 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
         .iter()
         .filter_map(|id| snap.apps.iter().find(|app| &app.id == id))
         .collect();
-    // The site first, then what stands behind it: the order of their ports
-    apps.sort_by_key(|app| app.port);
+    // The site first, then what stands behind it: by the folder's name, with the project's own folder leading
+    apps.sort_by_key(|app| {
+        (
+            app.part.is_some(),
+            !matches!(
+                app.part.as_deref(),
+                Some("web" | "website" | "site" | "www")
+            ),
+            app.part.clone(),
+        )
+    });
     let resting = apps
         .iter()
         .filter(|app| {
@@ -659,6 +686,7 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
     let words = if s.editing {
         changing(s, project, l)
     } else {
+        // These sit over the project's light, so they are white let through rather than a grey of their own
         let mut words = col().gap(5.0).child(
             text(project.title.clone())
                 .font(sans(26.0, 600.0))
@@ -669,7 +697,7 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
             words = words.child(
                 text(says.clone())
                     .font(sans(13.0, 400.0).lh(19.0))
-                    .color(l.soft)
+                    .color(l.ink.alpha(0.78))
                     .wrap()
                     .max_lines(2),
             );
@@ -677,7 +705,7 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
         words.child(
             text(model::folder(&project.group, &project.name))
                 .font(sans(12.0, 400.0))
-                .color(l.faint)
+                .color(l.ink.alpha(0.62))
                 .truncate(),
         )
     };
@@ -745,7 +773,7 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
 
     let mut list = col().key("project-body").gap(14.0);
     for app in apps {
-        list = list.child(app_card(s, snap, servers, project, app, l));
+        list = list.child(app_card(s, servers, project, app, l));
     }
     col()
         .key(format!("project-{}", project.key))

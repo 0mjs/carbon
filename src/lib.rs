@@ -11,5 +11,6 @@ pub mod engine;
 pub mod harness;
 pub mod identity;
 pub mod places;
+pub mod ports;
 pub mod server;
 pub mod stack;

@@ -1,7 +1,5 @@
 /* The page's line to Carbon's engine: the shapes it sends, and one function per thing the page can ask for. */
 
-export type Role = 'website' | 'admin' | 'pro' | 'other'
-
 export type App = {
   /** Its folder, relative to home: "dev/work/thing/web" */
   id: string
@@ -9,7 +7,6 @@ export type App = {
   project: string
   /** The folder inside the project, when the app isn't the project root */
   part: string | null
-  role: Role
   /** vite, next, astro, node, deno, cargo, go, mise or procfile */
   kind: string
   runtime: string | null
@@ -32,9 +29,7 @@ export type Project = { key: string; name: string; title: string; group: string;
 
 export type Slot = {
   port: number
-  role: Role
-  label: string
-  status: 'idle' | 'starting' | 'running' | 'exited'
+  status: 'starting' | 'running' | 'exited'
   app: string | null
   /** What holds the port when it isn't an app Carbon knows */
   holder: string | null

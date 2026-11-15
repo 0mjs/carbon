@@ -90,7 +90,7 @@ function Port({ slot, app, pictures }: { slot: Slot; app?: App; pictures: boolea
     <article data-status={slot.status} className="port relative flex min-w-0 flex-col gap-4 bg-bg p-4">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 font-mono text-[11px] text-faint">
-          {slot.label}
+          {app ? app.project : 'Port'}
           {slot.by && <AgentMark harness={slot.by} name={slot.by} className="size-4" />}
         </span>
         <span className="flex items-center gap-2 font-mono text-[11px] text-muted">
@@ -133,7 +133,7 @@ function Port({ slot, app, pictures }: { slot: Slot; app?: App; pictures: boolea
         >
           Output
         </button>
-        <button type="button" className="btn flex-1" disabled={slot.status === 'idle' || busy !== null} onClick={() => stop(slot.port)}>
+        <button type="button" className="btn flex-1" disabled={busy !== null} onClick={() => stop(slot.port)}>
           {busy === `stop:${slot.port}` ? '…' : slot.status === 'exited' ? 'Clear' : 'Stop'}
         </button>
       </div>
@@ -157,7 +157,7 @@ function AppRow({ app, slot }: { app: App; slot?: Slot }) {
   const stop = useCarbon((s) => s.stop)
   const pin = useCarbon((s) => s.pin)
   const mise = useCarbon((s) => s.snap?.mise)
-  const here = slot && slot.status !== 'idle'
+  const here = slot !== undefined
   return (
     <li className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 py-2">
       <div className="min-w-0">
@@ -427,7 +427,7 @@ function Palette() {
       list.push({ label: `Stop ${a ? appName(a) : s.port}`, hint: String(s.port), run: () => void stop(s.port) })
     }
     for (const a of snap.apps) {
-      if (!snap.slots.some((s) => s.app === a.id && s.status !== 'idle'))
+      if (!snap.slots.some((s) => s.app === a.id))
         list.push({ label: `Run ${appName(a)}`, hint: String(a.port), run: () => void start(a.id) })
     }
     list.push({ label: 'New project', hint: '', run: () => void navigate({ to: '/new' }) })
@@ -667,7 +667,11 @@ export function Shell() {
 
       <main className="min-h-0 flex-1 overflow-auto">
         {/* The rack. gap-px over a line-coloured background draws the hairlines between the ports */}
-        <section aria-label="Ports" className="grid grid-cols-2 gap-px border-b border-line bg-line md:grid-cols-4">
+        {/* Nothing to show until something is on a port of Carbon's */}
+        <section
+          aria-label="Ports"
+          className={`grid grid-cols-2 gap-px bg-line md:grid-cols-4 ${snap.slots.length > 0 ? 'border-b border-line' : ''}`}
+        >
           {snap.slots.map((s) => (
             <Port
               key={s.port}
@@ -704,7 +708,7 @@ export function Shell() {
 
         <section>
           <h2 className="px-4 py-3 text-[13px] font-medium">
-            Projects <span className="font-normal text-faint">running an app puts it on its port and clears what was there</span>
+            Projects <span className="font-normal text-faint">each app runs on a port of its own</span>
           </h2>
           {/* gap-px over a line-coloured background draws the hairlines between the cards */}
           <div className="grid grid-cols-1 gap-px border-t border-line bg-line lg:grid-cols-2 2xl:grid-cols-3">

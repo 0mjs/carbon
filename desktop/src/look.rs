@@ -87,6 +87,38 @@ pub fn raised(surface: El, shade: (Color, Color), radius: f32, l: &Look) -> El {
         .shadow(14.0, 32.0, l.shadow)
 }
 
+/// A raised surface that is switched on: its rim and the air around it take a colour (green for live)
+pub fn lit(surface: El, shade: (Color, Color), radius: f32, tone: Color, l: &Look) -> El {
+    surface
+        .radius(radius)
+        .continuous_corners()
+        .gradient(shade.0, shade.1)
+        .border_gradient(1.0, tone.alpha(0.55), tone.alpha(0.1))
+        .shadow(1.0, 2.0, l.shadow)
+        .shadow(14.0, 32.0, l.shadow)
+        .shadow(0.0, 26.0, tone.alpha(0.14))
+}
+
+/// Light behind something, far out of focus. The renderer only blurs so far, so a small blurred thing is drawn
+/// large. `light` is 48 points square.
+pub fn aura(light: El, left: f32, top: f32, strength: f32) -> El {
+    el().size(48.0, 48.0)
+        .absolute(left, top)
+        .scale(7.0)
+        .opacity(strength)
+        .child(light.blur(9.0))
+}
+
+/// The colour a surface is lit with for what is on it, if anything is
+pub fn tone(status: &str, l: &Look) -> Option<Color> {
+    match status {
+        "running" => Some(l.live),
+        "starting" => Some(l.starting),
+        "exited" => Some(l.bad),
+        _ => None,
+    }
+}
+
 /// A small light: green once answering, amber while starting, red if it fell over, hollow when off
 pub fn dot(status: &str, l: &Look) -> El {
     let light = el().size(8.0, 8.0).radius(4.0);

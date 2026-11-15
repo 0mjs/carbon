@@ -3,11 +3,13 @@
 //! in the folders they live in.
 
 use carbon::engine::{Project, Snapshot};
-use rune::{Cursor, Cx, El, Key, ScrollSpec, TextEdit, Tx, col, el, row, spacer, text, text_input};
+use rune::{
+    Color, Cursor, Cx, El, Key, ScrollSpec, TextEdit, Tx, col, el, row, spacer, text, text_input,
+};
 
 use crate::{
     Page, State, TITLEBAR,
-    look::{Kind, Look, button, dot, icon, look, mono, sans, tile},
+    look::{Kind, Look, button, dot, icon, look, mark, mono, sans, tile},
     model::{self, Server},
     pages, setup,
 };
@@ -149,7 +151,7 @@ fn project_entry(s: &State, project: &Project, servers: &[Server], l: &Look) -> 
     entry
 }
 
-fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> El {
+fn list(s: &State, snap: &Snapshot, servers: &[Server], lead: f32, l: &Look) -> El {
     let running = servers.iter().filter(|server| server.live()).count();
     let mut home = entry(
         "go-running".into(),
@@ -226,12 +228,21 @@ fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> E
                 .color(l.soft),
         );
 
+    // Carbon's name, beside the window's own buttons where it has them
+    let brand = row()
+        .h(TITLEBAR)
+        .pl(lead)
+        .gap(9.0)
+        .center_y()
+        .window_drag()
+        .child(mark(s, "carbon", 22.0, l))
+        .child(text("Carbon").font(sans(14.5, 600.0)).color(l.ink));
+
     col()
         .key("list")
         .w(LIST)
         .h_full()
-        // The window's own buttons sit over this band, and it moves the window
-        .child(el().h(top).window_drag())
+        .child(brand)
         .child(search(s, l))
         .child(el().h(10.0))
         .child(home)
@@ -319,6 +330,21 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .clip_rounded(16.0)
         .gradient(l.sheet.0, l.sheet.1)
         .border_gradient(1.0, l.rim.0.alpha(0.1), l.rim.1);
+    // A soft light falling on the sheet from above, so the black has depth
+    sheet = sheet.child(
+        el().key("light")
+            .absolute(0.0, 0.0)
+            .w_full()
+            .h(420.0)
+            .radial_gradient(
+                [0.5, 0.0],
+                [760.0, 420.0],
+                [
+                    (0.0, Color::WHITE.alpha(0.055)),
+                    (1.0, Color::WHITE.alpha(0.0)),
+                ],
+            ),
+    );
     if let Some(why) = &s.error {
         sheet = sheet.child(refusal(why, &l));
     }
@@ -326,11 +352,10 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if alone {
         return window.child(sheet);
     }
-    // Room for the window's own buttons where they sit over the list; full screen has none
-    let top = if cx.chrome_insets().leading > 0.0 {
-        TITLEBAR
-    } else {
-        14.0
+    // Carbon's name starts clear of the window's own buttons, where the window has them
+    let lead = match cx.chrome_insets().leading {
+        buttons if buttons > 0.0 => buttons + 10.0,
+        _ => 18.0,
     };
-    window.child(list(s, snap, &servers, top, &l)).child(sheet)
+    window.child(list(s, snap, &servers, lead, &l)).child(sheet)
 }

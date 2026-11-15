@@ -13,7 +13,6 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     env, fs, io,
-    ops::RangeInclusive,
     path::{Path, PathBuf},
     process::Stdio,
     sync::{Arc, Mutex},
@@ -30,26 +29,11 @@ use crate::agents::{self, Proc};
 use crate::detect::{self, Plan};
 use crate::identity;
 use crate::places;
+use crate::ports;
 use crate::stack;
 
 pub const HUB_PORT: u16 = 3000;
-const POOL: RangeInclusive<u16> = 3004..=3019;
 const MAX_LOG: usize = 800;
-
-#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    Website,
-    Admin,
-    Pro,
-    Other,
-}
-
-const FIXED: [(u16, Role, &str); 3] = [
-    (3001, Role::Website, "Website"),
-    (3002, Role::Admin, "Admin"),
-    (3003, Role::Pro, "Pro"),
-];
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,7 +50,6 @@ pub struct App {
     project_dir: PathBuf,
     /// Where its code stands: branch, last commit, uncommitted changes
     pub git: Option<Git>,
-    pub role: Role,
     pub kind: &'static str,
     pub runtime: Option<&'static str>,
     /// What it is built with, for the logos beside its name
@@ -75,7 +58,7 @@ pub struct App {
     pub pinned: bool,
     #[serde(skip)]
     plan: Plan,
-    /// The port it is on now, or would be given
+    /// Its own port: picked at random the first time Carbon saw it, and kept
     pub port: u16,
     /// Exactly what Carbon runs for it
     pub command: String,
@@ -153,9 +136,7 @@ pub struct Listener {
 #[serde(rename_all = "camelCase")]
 pub struct Slot {
     pub port: u16,
-    pub role: Role,
-    pub label: &'static str,
-    /// idle: nothing there. starting: launched, not answering yet. running: answering. exited: it stopped by itself
+    /// starting: launched, not answering yet. running: answering. exited: it stopped by itself
     pub status: &'static str,
     pub app: Option<String>,
     /// What holds the port when it isn't one of the apps Carbon knows
@@ -271,6 +252,8 @@ pub struct Hub {
     me: PathBuf,
     pub mise: Option<PathBuf>,
     managed: Mutex<HashMap<u16, Managed>>,
+    /// The port each app was given, by the app's id
+    ports: Mutex<HashMap<String, u16>>,
     pub jobs: Mutex<Vec<Job>>,
     cache: Mutex<Option<(Instant, Vec<App>)>>,
 }
@@ -279,28 +262,6 @@ fn signal(pid: i32, sig: i32) {
     // SAFETY: kill(2) only sends a signal; a pid that has gone is reported as an error, which is ignored
     unsafe {
         libc::kill(pid, sig);
-    }
-}
-
-fn role_named(name: &str) -> Option<Role> {
-    match name {
-        "website" => Some(Role::Website),
-        "admin" => Some(Role::Admin),
-        "pro" => Some(Role::Pro),
-        "other" => Some(Role::Other),
-        _ => None,
-    }
-}
-
-/// The role a folder's name suggests. A project's own folder is its website; anything unrecognised is "other".
-fn role_of(part: Option<&str>) -> Role {
-    match part.map(|p| p.rsplit('/').next().unwrap_or(p)) {
-        None | Some("web" | "website" | "site" | "www" | "landing" | "frontend" | "client") => {
-            Role::Website
-        }
-        Some("admin" | "backoffice") => Role::Admin,
-        Some("pro" | "dashboard" | "console" | "portal") => Role::Pro,
-        Some(_) => Role::Other,
     }
 }
 
@@ -479,6 +440,7 @@ impl Hub {
                 PathBuf::from("/opt/homebrew/bin/mise"),
             ])
             .find(|p| p.is_file());
+        let ports = Mutex::new(ports::kept(&home));
         Hub {
             home,
             roots: Mutex::new(None),
@@ -490,6 +452,7 @@ impl Hub {
             me: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             mise,
             managed: Mutex::new(HashMap::new()),
+            ports,
             jobs: Mutex::new(Vec::new()),
             cache: Mutex::new(None),
         }
@@ -769,17 +732,10 @@ impl Hub {
                 .filter_map(|p| p.to_str())
                 .collect::<Vec<_>>()
                 .join("/");
-            // A role given by hand in the config wins over what the folder's name suggests
-            let role = config
-                .roles
-                .get(&spot.dir)
-                .and_then(|r| role_named(r))
-                .unwrap_or_else(|| role_of(spot.part.as_deref()));
             apps.push(App {
                 id,
                 group: spot.group,
                 project: spot.project,
-                role,
                 part: spot.part,
                 kind: plan.kind,
                 runtime: plan.runtime,
@@ -1003,38 +959,58 @@ impl Hub {
         Ok(())
     }
 
-    /// The port an app runs on: its role's, or for anything else the pool port it already has, or the next free
-    fn port_for(&self, app: &App, live: &[Listener]) -> u16 {
-        if let Some((port, _, _)) = FIXED.iter().find(|f| f.1 == app.role) {
+    /// The port an app has: the one it was given, or a new one the first time it is seen
+    fn port_of(&self, id: &str) -> u16 {
+        let mut ports = self.ports.lock().unwrap();
+        if let Some(port) = ports.get(id) {
             return *port;
         }
-        let managed = self.managed.lock().unwrap();
-        if let Some(port) = POOL
-            .clone()
-            .find(|p| managed.get(p).is_some_and(|m| m.app == app.id))
-        {
-            return port;
-        }
-        if let Some(l) = live
-            .iter()
-            .find(|l| POOL.contains(&l.port) && l.app.as_deref() == Some(&app.id))
-        {
-            return l.port;
-        }
-        POOL.clone()
-            .find(|p| !managed.contains_key(p) && !live.iter().any(|l| l.port == *p))
-            .unwrap_or(*POOL.start())
+        self.give(&mut ports, id)
     }
 
-    /// Starts an app on its port, taking the port from whatever had it
+    /// Gives an app a port nobody has and nothing is on, and remembers it. Zero if the whole range is in use.
+    fn give(&self, ports: &mut HashMap<String, u16>, id: &str) -> u16 {
+        let port = ports::pick(&|port| ports.values().any(|taken| *taken == port)).unwrap_or(0);
+        if port != 0 {
+            ports.insert(id.to_string(), port);
+            ports::keep(&self.home, ports);
+        }
+        port
+    }
+
+    /// Starts an app on its own port. If something else has that port, the app is given another rather than
+    /// taking it.
     pub async fn start(&self, id: &str) -> Result<u16, String> {
         let apps = self.discover();
         let app = apps
             .iter()
             .find(|a| a.id == id)
             .ok_or_else(|| format!("No app at {id}"))?;
-        let port = self.port_for(app, &self.listening(&apps).await);
-        self.stop(port).await?;
+        let mut port = self.port_of(id);
+        let mine = self
+            .managed
+            .lock()
+            .unwrap()
+            .get(&port)
+            .is_some_and(|m| m.app == id);
+        let same = self
+            .listening(&apps)
+            .await
+            .iter()
+            .any(|l| l.port == port && l.app.as_deref() == Some(id));
+        if mine || same {
+            // It is this app that is there already, from Carbon or from somewhere else: start it afresh
+            self.stop(port).await?;
+        } else if !ports::free(port) {
+            port = self.give(&mut self.ports.lock().unwrap(), id);
+        }
+        if port == 0 {
+            return Err(format!(
+                "Every port from {} to {} is in use",
+                ports::RANGE.start(),
+                ports::RANGE.end()
+            ));
+        }
 
         let mut line = app.plan.command(port);
         // A project that has never been installed gets its dependencies first, so Run works on a fresh checkout
@@ -1313,7 +1289,14 @@ impl Hub {
         }
         agents.sort_by_key(|a| a.since);
 
-        let slot = |port: u16, role: Role, label: &'static str| -> Slot {
+        // Every app has its port before anything is said about what is on it
+        for app in &mut apps {
+            app.port = self.port_of(&app.id);
+            app.command = app.plan.command(app.port);
+            app.git = self.git(&app.dir).await;
+        }
+
+        let slot = |port: u16| -> Slot {
             let managed = self.managed.lock().unwrap();
             let mine = managed.get(&port);
             let here = live.iter().find(|l| l.port == port);
@@ -1336,7 +1319,8 @@ impl Hub {
                     Some(m.app.clone()),
                     None,
                 ),
-                (None, None) => ("idle", None, None),
+                // A slot is only made for a port with one or the other
+                (None, None) => ("exited", None, None),
             };
             // The last line a stopped server printed before "Stopped…" is nearly always the reason it stopped
             let note = (status == "exited")
@@ -1354,8 +1338,6 @@ impl Hub {
                 .flatten();
             Slot {
                 port,
-                role,
-                label,
                 status,
                 app,
                 holder,
@@ -1367,27 +1349,21 @@ impl Hub {
             }
         };
 
-        let mut slots: Vec<Slot> = FIXED
-            .iter()
-            .map(|&(port, role, label)| slot(port, role, label))
-            .collect();
-        // The pool: every port in use, then the next free one, so there is always somewhere to see "Other" go
-        let mut spare = true;
-        for port in POOL {
-            let s = slot(port, Role::Other, "Other");
-            if s.status != "idle" {
-                slots.push(s);
-            } else if spare {
-                spare = false;
-                slots.push(s);
-            }
-        }
+        // A slot for each port Carbon is running something on (or was, until it stopped by itself), and for each
+        // app that is serving on its own port whoever started it
+        let mut taken: Vec<u16> = self.managed.lock().unwrap().keys().copied().collect();
+        taken.extend(
+            live.iter()
+                .filter(|l| {
+                    apps.iter()
+                        .any(|a| a.port == l.port && Some(&a.id) == l.app.as_ref())
+                })
+                .map(|l| l.port),
+        );
+        taken.sort();
+        taken.dedup();
+        let slots: Vec<Slot> = taken.iter().map(|&port| slot(port)).collect();
 
-        for app in &mut apps {
-            app.port = self.port_for(app, &live);
-            app.command = app.plan.command(app.port);
-            app.git = self.git(&app.dir).await;
-        }
         // Apps gathered into their projects, each project saying what it is
         let chosen = identity::chosen(&self.home);
         let logos = identity::logos(&self.home);
@@ -1426,11 +1402,9 @@ impl Hub {
             }
         }
 
-        // Elsewhere: dev servers in the places code lives that are not on a Carbon port (started by hand, or by an agent).
+        // Elsewhere: dev servers in the places code lives that are not in a slot (started by hand, or by an agent).
         // Ports the system hands out by itself (49152 and up) and debugger ports are a server's own plumbing
-        let ours = |port: u16| {
-            FIXED.iter().any(|f| f.0 == port) || POOL.contains(&port) || port == HUB_PORT
-        };
+        let ours = |port: u16| taken.contains(&port) || port == HUB_PORT;
         let plumbing = |port: u16| port >= 49152 || (9229..=9239).contains(&port);
         let others = live
             .iter()

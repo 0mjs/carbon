@@ -5,10 +5,10 @@ type Store = {
   snap: Snapshot | null
   /** Carbon has stopped answering */
   offline: boolean
-  /** What is mid-flight, e.g. "start:work/shop/web", "stop:3001", "project:work/shop" */
+  /** What is mid-flight, e.g. "start:work/shop/web", "stop:4242", "project:work/shop" */
   busy: string | null
   error: string | null
-  /** Whose output the console shows: a port ("3001") or a job key ("create:lab/thing"), or nothing */
+  /** Whose output the console shows: a port ("4242") or a job key ("create:lab/thing"), or nothing */
   console: string | null
   palette: boolean
   setConsole: (key: string | null) => void

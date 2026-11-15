@@ -76,14 +76,18 @@ fn ls() -> Result<(), String> {
     let state = client::get("/api/state")?;
     let apps = state["apps"].as_array().cloned().unwrap_or_default();
     let name_of = |id: &Value| apps.iter().find(|a| a["id"] == *id).map(app_name);
-    println!("{:<6}{:<10}{:<28}{}", "PORT", "STATE", "WHAT", "BY");
-    for slot in state["slots"].as_array().into_iter().flatten() {
+    let slots = state["slots"].as_array().cloned().unwrap_or_default();
+    if slots.is_empty() {
+        println!("Nothing is running on a port of Carbon's.");
+    } else {
+        println!("{:<6}{:<10}{:<28}{}", "PORT", "STATE", "WHAT", "BY");
+    }
+    for slot in &slots {
         let what = name_of(&slot["app"])
             .or_else(|| slot["holder"].as_str().map(String::from))
             .unwrap_or_else(|| "-".into());
         let state = match text(&slot["status"]) {
             "running" => "live",
-            "idle" => "free",
             other => other,
         };
         let note = slot["note"]
@@ -215,7 +219,7 @@ fn port_of(word: &str) -> Result<u64, String> {
     let slots = state["slots"].as_array().cloned().unwrap_or_default();
     let on: Vec<u64> = slots
         .iter()
-        .filter(|s| text(&s["status"]) != "idle" && ids.contains(&text(&s["app"])))
+        .filter(|s| ids.contains(&text(&s["app"])))
         .filter_map(|s| s["port"].as_u64())
         .collect();
     match on.as_slice() {

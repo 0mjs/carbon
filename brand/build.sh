@@ -8,7 +8,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 INK='#f4f4f5'
 magick -depth 16 \
-  \( -size 1648x742 gradient:'#272727-#141414' \) \( -size 1648x906 gradient:'#141414-#070707' \) -append \
+  \( -size 1648x742 gradient:'#161616-#0a0a0a' \) \( -size 1648x906 gradient:'#0a0a0a-#030303' \) -append \
   -colorspace Gray -attenuate 0.12 +noise Gaussian -colorspace sRGB \
   \( -size 1648x1648 xc:black -fill white -draw 'roundrectangle 0,0 1647,1647 372,372' \) \
   -alpha off -compose CopyOpacity -composite tile.miff
