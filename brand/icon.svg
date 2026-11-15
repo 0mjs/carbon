@@ -6,5 +6,5 @@
   </defs>
   <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#tile)" filter="url(#shadow)"/>
   <rect x="102" y="102" width="820" height="820" rx="184" fill="none" stroke="url(#edge)" stroke-width="4"/>
-  <g transform="translate(512 512) scale(0.98) translate(-256 -256)"><circle cx="256" cy="256" r="150" fill="none" stroke-width="68" stroke-dasharray="759.2 183.3" transform="rotate(35 256 256)" stroke="#f2f2f3"/><circle cx="408" cy="256" r="38" fill="#f2f2f3"/></g>
+  <g transform="translate(512 512) scale(1.2) translate(-256 -256)"><circle cx="256" cy="256" r="150" fill="none" stroke-width="68" stroke-dasharray="759.2 183.3" transform="rotate(35 256 256)" stroke="#f2f2f3"/><circle cx="408" cy="256" r="38" fill="#f2f2f3"/></g>
 </svg>

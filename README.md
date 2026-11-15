@@ -1,14 +1,14 @@
 # Carbon
 
-The local hub for everything in `~/dev`: a macOS app, a command, and a dashboard for the dev servers on your
-machine. It is always on **http://localhost:3000**, and it decides what runs on the ports next to it:
+A desktop app, a command, and a dashboard for the dev servers on your machine. It finds your projects by itself,
+is always on **http://localhost:3000**, and decides what runs on the ports next to it:
 
 | Port | What runs there |
 | --- | --- |
 | 3000 | Carbon |
-| 3001 | Website: a project's site (`web`, `website`, `site`, or the project itself) |
-| 3002 | Admin: a folder named `admin` |
-| 3003 | Pro: a folder named `coach` or `pro` |
+| 3001 | Website: a project's site (`web`, `website`, `site`, `frontend`, or the project itself) |
+| 3002 | Admin: a folder named `admin` or `backoffice` |
+| 3003 | Pro: a folder named `pro`, `dashboard`, `console` or `portal` |
 | 3004–3019 | Everything else, one port each |
 
 Running an app puts it on its port and stops whatever was there, so the same kind of thing is always at the same
@@ -22,9 +22,10 @@ mise run install    # install the `carbon` command into ~/.cargo/bin
 mise run start      # or just run the hub in this terminal
 ```
 
-- **The app** is the hub: it runs the engine inside itself and shows the dashboard in a window. Closing the window
-  leaves Carbon in the menu bar with every server still running; quitting from the menu bar stops Carbon and the
-  servers it started.
+- **The app** is the hub: it runs the engine inside itself and draws the dashboard natively with
+  [Rune](https://github.com/anomalyco/rune), with no web view, so the same app can be built for macOS, Windows and
+  Linux. Closing the window leaves Carbon and every server running (click the Dock icon to bring it back); quitting
+  stops Carbon and the servers it started.
 - **The command** talks to whichever hub is running (the app, or `carbon serve`):
 
   ```
@@ -34,7 +35,7 @@ mise run start      # or just run the hub in this terminal
   carbon stop <app|port>  stop what is on a port
   carbon open <app|port>  open it in the browser
   carbon logs <port> [-f] what a server Carbon started has printed
-  carbon new <group>/<name> [start|spa|bun]
+  carbon new <folder>/<name> [start|spa|bun]
   ```
 
 - **The dashboard** is the same page in any browser at `localhost:3000`, with a ⌘K palette for run, stop and open.
@@ -51,9 +52,37 @@ which session a process is and what that session is called. Claude Code's adapte
 session shows its name and whether it is working or waiting. Codex, Gemini CLI and Grok CLI are recognised; their
 adapters don't read session records yet. Adding a harness is one adapter and one line in `ALL`.
 
+## Where it looks
+
+Carbon starts from your home folder. Any top-level folder there that holds a project within two levels is a place
+code lives (`~/dev`, `~/Projects`, `~/code`…); Documents, Desktop, Downloads, Library and the media folders are left
+alone. Inside such a place the layout is read, not assumed: a folder with a `.git`, a `package.json` or similar is a
+project, the folders inside it are its parts, and a folder with neither is a group of projects.
+
+`~/.config/carbon/config.json` overrides what was worked out. All of it is optional:
+
+```json
+{
+  "roots": ["~/work", "~/Documents/code"],
+  "roles": { "~/work/shop/coach": "pro" },
+  "browser": "Helium"
+}
+```
+
+`roots` says exactly where to look, `roles` puts a folder on a particular port (`website`, `admin`, `pro` or
+`other`), and `browser` chooses what links open in (the system's default without it).
+
+## Projects and previews
+
+Each project is a card: what it says it is (from its manifest or README), and for each app its branch, when it was
+last committed to, how many files are uncommitted, and the last commit's first line. Every port that is serving
+shows a picture of its page, retaken every twenty seconds by a Chromium-family browser (Chrome, Chromium, Brave,
+Edge, Helium or Vivaldi) run without a window.
+
 ## What it can run
 
-A folder under `~/dev/<group>/<project>` (or one level inside a project) is runnable when, in this order:
+A project, or a folder one level inside one (two under `apps/`, `packages/`, `services/` or `sites/`), is runnable
+when, in this order:
 
 1. its `mise.toml` has a `dev` task: `mise run dev`
 2. its `package.json` has a `dev` script: that script. Vite, Next and Astro are told their port by flag
@@ -71,7 +100,7 @@ installed first. If a server stops by itself, its port shows the last thing it p
 
 ## New projects
 
-"New project" (or `carbon new`) creates `~/dev/<group>/<name>` from a template (TanStack Start, TanStack Router, or
+"New project" (or `carbon new`) creates a project in one of the folders Carbon found, from a template (TanStack Start, TanStack Router, or
 an empty Bun project) and pins Bun in its `mise.toml`.
 
 ## New tabs in Helium
@@ -86,7 +115,9 @@ repository's `helium` folder.
   reading what is listening from the OS), `detect.rs` (how to run each kind of project), `agents.rs` and
   `harness.rs` (who started what), `create.rs` (new projects), `server.rs` (the HTTP API and the page),
   `client.rs` and `main.rs` (the command).
-- `desktop/` is the macOS app, in Rust (Tauri): the same engine in a window with a menu-bar icon.
+- `src/places.rs` finds where code lives and reads the config.
+- `desktop/` is the desktop app, in Rust, drawn with Rune: the same engine and server inside a native window.
+  `Carbon --snap out.png --scene now` renders the window to a picture without opening one.
 - `ui/` is the page, in TypeScript, because it runs in a browser: Vite, React, TanStack Router, Tailwind, Zustand.
   It is built into the binary, so the command and the app each carry it.
 - `brand/` is the logo: `mark.svg` (the mark alone, in the text colour), `icon.svg` and `icon-1024.png` (white on a

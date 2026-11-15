@@ -1,0 +1,4 @@
+# The toolchain Rune is built and tested with
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]

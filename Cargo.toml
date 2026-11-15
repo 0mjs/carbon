@@ -28,3 +28,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io
 opt-level = 3
 lto = "thin"
 strip = true
+
+# Rune (the desktop app's UI) ships patched copies of these; an app that builds Rune patches them too, at the same
+# revision as Rune itself (see desktop/Cargo.toml)
+[patch.crates-io]
+winit = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91" }
+parley_engine = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91" }
+wgpu-hal = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91" }
+accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91" }
+accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "2c4cf4d91a1a696408a5dc2d4d4699a18fa25b91" }

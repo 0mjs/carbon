@@ -1,6 +1,7 @@
 # Carbon's own tools and commands.
 [tools]
 bun = "latest"
+# Rust itself comes from rustup, at the version in rust-toolchain.toml
 
 [tasks.start]
 description = "Build the page, then run the hub on port 3000 in this terminal"

@@ -82,26 +82,26 @@ pub struct App {
 /// What git says about a folder
 #[derive(Clone, Serialize)]
 pub struct Git {
-    branch: String,
+    pub branch: String,
     /// When the last commit was made, in milliseconds
-    last: u64,
+    pub last: u64,
     /// The last commit's first line
-    subject: String,
+    pub subject: String,
     /// Files changed or added since then
-    changes: u32,
+    pub changes: u32,
 }
 
 /// A project: one or more apps that belong together
 #[derive(Serialize)]
 pub struct Project {
     /// "<group>/<name>"
-    key: String,
-    name: String,
+    pub key: String,
+    pub name: String,
     /// The folder it is in, relative to home
-    group: String,
+    pub group: String,
     /// What it says it is, from its manifest or README
-    description: Option<String>,
-    apps: Vec<String>,
+    pub description: Option<String>,
+    pub apps: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -116,75 +116,75 @@ pub struct Listener {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Slot {
-    port: u16,
-    role: Role,
-    label: &'static str,
+    pub port: u16,
+    pub role: Role,
+    pub label: &'static str,
     /// idle: nothing there. starting: launched, not answering yet. running: answering. exited: it stopped by itself
-    status: &'static str,
-    app: Option<String>,
+    pub status: &'static str,
+    pub app: Option<String>,
     /// What holds the port when it isn't one of the apps Carbon knows
-    holder: Option<String>,
-    pid: Option<i32>,
+    pub holder: Option<String>,
+    pub pid: Option<i32>,
     /// Carbon started it, so there is output to show
-    has_logs: bool,
+    pub has_logs: bool,
     /// When it stopped by itself: the last thing it said, which is usually why
-    note: Option<String>,
-    since: Option<u64>,
+    pub note: Option<String>,
+    pub since: Option<u64>,
     /// The agent that started what is on this port, if one did: claude, openai, gemini or grok
-    by: Option<&'static str>,
+    pub by: Option<&'static str>,
 }
 
 /// One server an agent started
 #[derive(Serialize)]
 pub struct Started {
-    pid: i32,
-    command: String,
-    cwd: Option<String>,
-    app: Option<String>,
+    pub pid: i32,
+    pub command: String,
+    pub cwd: Option<String>,
+    pub app: Option<String>,
     /// The ports its process tree is listening on
-    ports: Vec<u16>,
-    since: u64,
+    pub ports: Vec<u16>,
+    pub since: u64,
 }
 
 /// One agent session that has servers running, and those servers
 #[derive(Serialize)]
 pub struct Agent {
     /// The harness's key and name, e.g. "claude-code" and "Claude Code"
-    harness: &'static str,
-    name: &'static str,
+    pub harness: &'static str,
+    pub name: &'static str,
     /// Whose mark to show: claude, openai, gemini or grok
-    vendor: &'static str,
-    pid: i32,
-    cwd: Option<String>,
-    since: u64,
+    pub vendor: &'static str,
+    pub pid: i32,
+    pub cwd: Option<String>,
+    pub since: u64,
     /// What the session is called, when the harness says
-    title: Option<String>,
+    pub title: Option<String>,
     /// "busy" or "idle", when the harness says
-    status: Option<String>,
-    servers: Vec<Started>,
+    pub status: Option<String>,
+    pub servers: Vec<Started>,
 }
 
 #[derive(Serialize)]
 pub struct JobState {
-    key: String,
-    title: String,
+    pub key: String,
+    pub title: String,
     /// running, done or failed
-    status: &'static str,
+    pub status: &'static str,
 }
 
 #[derive(Serialize)]
 pub struct Snapshot {
-    slots: Vec<Slot>,
-    apps: Vec<App>,
-    others: Vec<Listener>,
+    pub slots: Vec<Slot>,
+    pub apps: Vec<App>,
+    pub others: Vec<Listener>,
     /// The agent sessions that have servers running, with those servers
-    agents: Vec<Agent>,
+    pub agents: Vec<Agent>,
     /// The apps gathered into their projects
-    projects: Vec<Project>,
+    pub projects: Vec<Project>,
     /// The folders a new project can go in, relative to home
-    groups: Vec<String>,
-    jobs: Vec<JobState>,
-    mise: bool,
+    pub groups: Vec<String>,
+    pub jobs: Vec<JobState>,
+    pub mise: bool,
 }
 
 pub type Log = Arc<Mutex<VecDeque<String>>>;
