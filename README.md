@@ -8,7 +8,7 @@ app is at that address from then on, and no two apps want the same one, so every
 app is started its port is checked. If something else is on it, the app is given another port rather than pushing
 that aside. What each app was given is in `~/.config/carbon/ports.json`.
 
-Carbon is early: this is 0.0.3. It is built and used on macOS; the engine and the app are written to be portable,
+Carbon is early: this is 0.0.4. It is built and used on macOS; the engine and the app are written to be portable,
 but Linux and Windows are untried.
 
 ## Three ways in

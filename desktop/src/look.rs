@@ -100,11 +100,11 @@ pub fn lit(surface: El, shade: (Color, Color), radius: f32, tone: Color, l: &Loo
 }
 
 /// Light behind something, far out of focus. The renderer only blurs so far, so a small blurred thing is drawn
-/// large. `light` is 48 points square.
-pub fn aura(light: El, left: f32, top: f32, strength: f32) -> El {
+/// large: `light` is 48 points square, and `spread` is how many times larger it is drawn.
+pub fn aura(light: El, left: f32, top: f32, spread: f32, strength: f32) -> El {
     el().size(48.0, 48.0)
         .absolute(left, top)
-        .scale(7.0)
+        .scale(spread)
         .opacity(strength)
         .child(light.blur(9.0))
 }
@@ -299,6 +299,31 @@ pub fn mark(s: &State, name: &str, size: f32, l: &Look) -> El {
 /// The mark of a tool an app is built with. Resting the pointer on it says what it is.
 pub fn tech_mark(s: &State, tech: &Tech, size: f32, l: &Look) -> El {
     on_tile(s.techs.get(tech.id), size, l).help(tech.name)
+}
+
+/// What stands in for a picture of an app that isn't running: the mark of the main thing it is built with (its
+/// project's face, failing that), in a pool of light of the mark's own colour
+pub fn poster(s: &State, tech: Option<&Tech>, fallback: El, l: &Look) -> El {
+    let tone = tech
+        .and_then(|tech| s.tones.get(tech.id))
+        .copied()
+        .unwrap_or(l.ink);
+    let front = match tech.and_then(|tech| s.techs.get(tech.id)) {
+        Some(image) => on_tile(Some(image), 52.0, l).shadow(6.0, 18.0, l.shadow),
+        None => fallback,
+    };
+    row()
+        .center()
+        .radial_gradient(
+            [0.5, 0.5],
+            [230.0, 150.0],
+            [
+                (0.0, l.well.mix(tone, 0.2)),
+                (0.55, l.well.mix(tone, 0.055)),
+                (1.0, l.well),
+            ],
+        )
+        .child(front)
 }
 
 /// The main thing an app is built with, by mark and name

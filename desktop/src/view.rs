@@ -311,7 +311,7 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     };
     let page = match (&s.page, chosen) {
         (Page::Setup, _) => setup::page(s, &l),
-        (_, Some(project)) => pages::project(s, snap, &servers, project, &l),
+        (_, Some(project)) => pages::project(s, snap, &servers, project, across, &l),
         _ => pages::running(s, snap, &servers, across, &l),
     };
 

@@ -29,7 +29,9 @@ use carbon::{
     engine::{Hub, Place, Snapshot},
     places, server,
 };
-use rune::{AppSpec, Image, ImageCache, Key, KeyEvent, Latest, TextEdit, Titlebar, Tx, Waker};
+use rune::{
+    AppSpec, Color, Image, ImageCache, Key, KeyEvent, Latest, TextEdit, Titlebar, Tx, Waker,
+};
 
 /// The engine, and the runtime its async work runs on. Set once at start-up, before the window opens.
 static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
@@ -157,8 +159,9 @@ pub struct State {
     images: Option<ImageCache>,
     /// Carbon's own mark and each harness's, by id
     pub marks: HashMap<&'static str, Image>,
-    /// The mark of each tool an app can be built with, by id
+    /// The mark of each tool an app can be built with, by id, and the colour each mark is drawn in
     pub techs: HashMap<&'static str, Image>,
+    pub tones: HashMap<&'static str, Color>,
     /// The interface's own icons, by name
     pub icons: HashMap<&'static str, Image>,
     /// Setup: the places code could live and their projects, each ticked or not, as they stand before being
@@ -401,6 +404,14 @@ fn setup(s: &mut State, waker: Waker) {
     }
     for (tech, svg) in TECHS {
         s.techs.insert(tech, images.load(svg.to_vec()));
+        // Each mark's file says the colour it is drawn in, which is the colour its light is
+        let colour = std::str::from_utf8(svg)
+            .ok()
+            .and_then(|text| text.split_once("fill=\""))
+            .and_then(|(_, rest)| rune::color::hex(rest.get(..7)?));
+        if let Some(colour) = colour {
+            s.tones.insert(tech, colour);
+        }
     }
     for (icon, svg) in ICONS {
         s.icons.insert(icon, images.load(svg.to_vec()));
