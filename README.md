@@ -129,8 +129,8 @@ repository's `helium` folder.
   for a project's page, `--theme light` for the light look).
 - `ui/` is the page, in TypeScript, because it runs in a browser: Vite, React, TanStack Router, Tailwind, Zustand.
   It is built into the binary, so the command and the app each carry it.
-- `brand/` is the logo: `mark.svg` (the mark alone, in the text colour), `icon.svg` and `icon-1024.png` (white on a
-  black tile) and `Carbon.icns`.
+- `brand/` is the logo: `mark.svg` (the mark alone, in the text colour), `icon.svg` (the app icon as a drawing), and
+  `icon-1024.png` and `Carbon.icns`, which `brand/build.sh` makes with ImageMagick.
 
 Carbon only listens on this machine and only answers requests addressed to `localhost:3000`.
 
