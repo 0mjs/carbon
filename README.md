@@ -3,6 +3,8 @@
 A desktop app, a command, and a dashboard for the dev servers on your machine. It finds your projects by itself,
 is always on **http://localhost:3000**, and gives every app a port of its own.
 
+![Carbon's Running page: three dev servers, each with a picture of its page and the agent session that started it](docs/running.webp)
+
 The first time Carbon sees an app it picks a port for it at random, between 4100 and 4999, and remembers it: the
 app is at that address from then on, and no two apps want the same one, so everything can run at once. Before an
 app is started its port is checked. If something else is on it, the app is given another port rather than pushing
@@ -45,6 +47,8 @@ mise run start        # or just run the hub in this terminal
 
 - **The dashboard** is the same page in any browser at `localhost:3000`, with a ⌘K palette for run, stop and open.
 
+![A project's page: one app live with a picture of its page, the other waiting under the mark of what it is built with](docs/project.webp)
+
 ## Servers started by agents
 
 Coding agents start dev servers for you to look at, then leave them running. Carbon finds them: a server an agent
@@ -77,6 +81,8 @@ project, the folders inside it are its parts, and a folder with neither is a gro
 The app's first screen shows what was found, every folder and project ticked. Untick what you don't want, or add
 a folder Carbon didn't think to look in (your projects needn't be tidy: any folder inside your home folder will
 do). "Choose projects" at the bottom of the list brings the screen back.
+
+![The first screen: the folders and projects Carbon found, each with a tick box](docs/setup.webp)
 
 What you choose there is kept in `~/.config/carbon/config.json`, which you can also write by hand. All of it is
 optional:
@@ -157,6 +163,8 @@ repository's `helium` folder.
   for a project's page, `--theme light` for the light look).
 - `ui/` is the page, in TypeScript, because it runs in a browser: Vite, React, TanStack Router, Tailwind, Zustand.
   It is built into the binary, so the command and the app each carry it.
+- `docs/` holds the pictures in this file. Each is the app's own rendering (`carbon-desktop --snap`), framed as a
+  window by `docs/frame.sh`.
 - `brand/` is the logo: `mark.svg` (the mark alone, in the text colour), `icon.svg` (the app icon as a drawing), and
   `icon-1024.png` and `Carbon.icns`, which `brand/build.sh` makes with ImageMagick.
 

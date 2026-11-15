@@ -166,9 +166,9 @@ pub fn of(proc: &Proc) -> Option<&'static Harness> {
 
 /* ---------- Claude Code ---------- */
 
-/// The end of a session's conversation. Claude Code keeps each one at ~/.claude/projects/<folder>/<id>.jsonl and
-/// rewrites its title as it goes on, so only the end is read.
-fn claude_tail(home: &Path, id: &str) -> Option<String> {
+/// The end of a session's conversation: its last `bytes`. Claude Code keeps each one at
+/// ~/.claude/projects/<folder>/<id>.jsonl and rewrites its title as it goes on, so the end is what counts.
+fn claude_tail(home: &Path, id: &str, bytes: u64) -> Option<String> {
     let transcript: PathBuf = fs::read_dir(home.join(".claude/projects"))
         .ok()?
         .flatten()
@@ -176,7 +176,7 @@ fn claude_tail(home: &Path, id: &str) -> Option<String> {
         .find(|p| p.is_file())?;
     let mut file = fs::File::open(transcript).ok()?;
     let size = file.metadata().ok()?.len();
-    file.seek(SeekFrom::Start(size.saturating_sub(256 * 1024)))
+    file.seek(SeekFrom::Start(size.saturating_sub(bytes)))
         .ok()?;
     let mut tail = Vec::new();
     file.read_to_end(&mut tail).ok()?;
@@ -220,19 +220,29 @@ fn claude_code(pid: i32, home: &Path) -> Session {
     };
     let field = |key: &str| record[key].as_str().map(String::from);
     let id = field("sessionId");
-    let tail = id.as_deref().and_then(|id| claude_tail(home, id));
     // A name the person chose wins; otherwise the conversation's own title, then the name Claude Code derived
     let named = (record["nameSource"] == "user")
         .then(|| field("name"))
         .flatten();
-    let title = named
-        .or_else(|| tail.as_deref().and_then(claude_title))
-        .or_else(|| field("name"));
+    // The title and the model are near the end of the conversation, but one long line (a picture, a big file)
+    // can push them back, so more of it is read only when a little wasn't enough
+    let (mut title, mut model) = (None, None);
+    for bytes in [256 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024] {
+        let Some(tail) = id.as_deref().and_then(|id| claude_tail(home, id, bytes)) else {
+            break;
+        };
+        title = title.or_else(|| claude_title(&tail));
+        model = model.or_else(|| claude_model(&tail));
+        if model.is_some() && (named.is_some() || title.is_some()) {
+            break;
+        }
+    }
+    let title = named.or(title).or_else(|| field("name"));
     Session {
         id,
         title,
         status: field("status"),
-        model: tail.as_deref().and_then(claude_model),
+        model,
         version: field("version"),
     }
 }
