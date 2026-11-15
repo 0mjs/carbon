@@ -5,7 +5,7 @@ import type { AgentKind } from './logos'
 export type Role = 'website' | 'admin' | 'pro' | 'other'
 
 export type App = {
-  /** Path under ~/dev, e.g. "saas/cutwise/web" */
+  /** Its folder, relative to home: "dev/work/thing/web" */
   id: string
   group: string
   project: string
@@ -22,7 +22,13 @@ export type App = {
   /** Exactly what Carbon runs for it */
   command: string
   byEnv: boolean
+  /** Where its code stands */
+  git: Git | null
 }
+
+export type Git = { branch: string; last: number; subject: string; changes: number }
+/** One or more apps that belong together */
+export type Project = { key: string; name: string; group: string; description: string | null; apps: string[] }
 
 export type Slot = {
   port: number
@@ -69,6 +75,7 @@ export type Snapshot = {
   apps: App[]
   others: Listener[]
   agents: Agent[]
+  projects: Project[]
   groups: string[]
   jobs: Job[]
   templates: Template[]

@@ -165,17 +165,28 @@ async fn pin(State(hub): Shared, Json(body): Json<ById>) -> Reply {
 }
 
 /// Opens a local port in the real browser. The desktop app's own window is for the dashboard, so its "Open"
-/// buttons come here.
-async fn open(Json(body): Json<ByPort>) -> Reply {
+/// buttons come here; so does `carbon open`.
+async fn open(State(hub): Shared, Json(body): Json<ByPort>) -> Reply {
     if body.port < 1024 {
         return Err(failed(format!("{} isn't a port Carbon opens", body.port)));
     }
-    let url = format!("http://localhost:{}", body.port);
-    let helium = Command::new("open").args(["-a", "Helium", &url]).status();
-    if !helium.is_ok_and(|s| s.success()) {
-        let _ = Command::new("open").arg(&url).status();
-    }
+    hub.open(&format!("http://localhost:{}", body.port));
     Ok(Json(json!({})))
+}
+
+/// A picture of what a port is serving: a PNG, or nothing yet while the first one is being taken
+async fn preview(State(hub): Shared, Path(port): Path<u16>) -> Response {
+    match hub.preview(port) {
+        Some(png) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
+            png.as_ref().clone(),
+        )
+            .into_response(),
+        None => StatusCode::NO_CONTENT.into_response(),
+    }
 }
 
 async fn new_project(State(hub): Shared, Json(body): Json<NewProject>) -> Reply {
@@ -195,6 +206,7 @@ fn router(hub: Arc<Hub>) -> Router {
         .route("/api/pin", post(pin))
         .route("/api/create", post(new_project))
         .route("/api/open", post(open))
+        .route("/api/preview/{port}", get(preview))
         .fallback(page)
         .layer(middleware::from_fn(local_only))
         .with_state(hub)

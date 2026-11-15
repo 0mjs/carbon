@@ -1,6 +1,6 @@
 import { Link, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { api, type Agent, type App, type Listener, type Slot } from './api'
+import { api, type Agent, type App, type Listener, type Project, type Slot } from './api'
 import { AgentMark } from './logos'
 import { useCarbon } from './store'
 
@@ -44,9 +44,42 @@ function Mark() {
 
 const WORD = { idle: 'Free', starting: 'Starting', running: 'Live', exited: 'Stopped' } as const
 
+/* ---------- Previews: a picture of what a port is serving ---------- */
+
+/** The hub takes a new picture every twenty seconds or so; asking with a new number every ten picks it up */
+function usePreview(port: number, live: boolean) {
+  const [tick, setTick] = useState(() => Math.floor(Date.now() / 10_000))
+  const [seen, setSeen] = useState(false)
+  useEffect(() => {
+    if (!live) return
+    // Ask often until the first picture arrives, then only as often as it changes
+    const timer = setInterval(() => setTick(Math.floor(Date.now() / (seen ? 10_000 : 2_500))), seen ? 10_000 : 2_500)
+    return () => clearInterval(timer)
+  }, [live, seen])
+  return { src: live ? `/api/preview/${port}?t=${tick}` : null, seen: live && seen, setSeen }
+}
+
+function Preview({ port, live, className = '' }: { port: number; live: boolean; className?: string }) {
+  const { src, seen, setSeen } = usePreview(port, live)
+  return (
+    <div className={`relative overflow-hidden rounded-md border border-line bg-panel ${className}`}>
+      {/* The picture only shows once one has arrived: until then the pane is simply empty */}
+      {src && (
+        <img
+          src={src}
+          alt=""
+          onLoad={(e) => setSeen(e.currentTarget.naturalWidth > 0)}
+          onError={() => setSeen(false)}
+          className={`absolute inset-0 size-full object-cover object-top transition-opacity duration-500 ${seen ? 'opacity-100' : 'opacity-0'}`}
+        />
+      )}
+    </div>
+  )
+}
+
 /* ---------- The rack: one tile per port ---------- */
 
-function Port({ slot, app }: { slot: Slot; app?: App }) {
+function Port({ slot, app, pictures }: { slot: Slot; app?: App; pictures: boolean }) {
   const busy = useCarbon((s) => s.busy)
   const shown = useCarbon((s) => s.console)
   const stop = useCarbon((s) => s.stop)
@@ -54,7 +87,7 @@ function Port({ slot, app }: { slot: Slot; app?: App }) {
   const live = slot.status === 'running'
   const key = String(slot.port)
   return (
-    <article data-status={slot.status} className="port relative flex min-w-0 flex-col justify-between gap-6 bg-bg p-4">
+    <article data-status={slot.status} className="port relative flex min-w-0 flex-col gap-4 bg-bg p-4">
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 font-mono text-[11px] text-faint">
           {slot.label}
@@ -66,12 +99,14 @@ function Port({ slot, app }: { slot: Slot; app?: App }) {
           <span className="led" data-status={slot.status} />
         </span>
       </div>
+      {/* Pictures appear for the whole rack once anything is live, so the tiles stay one height */}
+      {pictures && <Preview port={slot.port} live={live} className="aspect-[16/10]" />}
       <div className="min-w-0">
-        <p className={`font-mono text-[2.5rem] leading-none font-medium tracking-tighter tabular-nums ${live ? '' : 'text-faint'}`}>
+        <p className={`font-mono text-[2rem] leading-none font-medium tracking-tighter tabular-nums ${live ? '' : 'text-faint'}`}>
           {slot.port}
         </p>
         {/* Two fixed lines, whatever they say, so every tile is the same height */}
-        <p className="mt-2.5 h-5 truncate text-[13px]" title={slot.holder ?? undefined}>
+        <p className="mt-2 h-5 truncate text-[13px]" title={slot.holder ?? undefined}>
           {app ? appName(app) : (slot.holder ?? <span className="text-faint">Nothing here</span>)}
         </p>
         <p className="h-4 truncate font-mono text-[11px] text-red-500" title={slot.note ?? undefined}>
@@ -106,7 +141,15 @@ function Port({ slot, app }: { slot: Slot; app?: App }) {
   )
 }
 
-/* ---------- Projects ---------- */
+/* ---------- Projects: what each one is, where its code stands, and its apps ---------- */
+
+/** How long ago something happened, in the largest unit that fits */
+function ago(ms: number) {
+  const s = Math.max(0, Math.floor((Date.now() - ms) / 1000))
+  if (s < 3600) return `${Math.max(1, Math.floor(s / 60))}m ago`
+  if (s < 86_400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86_400)}d ago`
+}
 
 function AppRow({ app, slot }: { app: App; slot?: Slot }) {
   const busy = useCarbon((s) => s.busy)
@@ -116,43 +159,49 @@ function AppRow({ app, slot }: { app: App; slot?: Slot }) {
   const mise = useCarbon((s) => s.snap?.mise)
   const here = slot && slot.status !== 'idle'
   return (
-    <li className="grid grid-cols-[1fr_auto] items-center gap-x-4 px-4 py-2.5 sm:grid-cols-[minmax(0,1fr)_11rem_3.5rem_4.5rem]">
+    <li className="grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-x-3 py-2">
       <div className="min-w-0">
         <p className="flex items-center gap-2 text-[13px]">
           <span className="led shrink-0" data-status={slot?.status ?? 'idle'} />
-          <span className="truncate">{app.part ?? app.project}</span>
+          <span className="truncate font-medium">{app.part ?? app.project}</span>
+          <span className="tag shrink-0">{app.kind}</span>
+          {/* Tool versions: named by the project, or one click to name them */}
+          {app.pinned ? (
+            <span className="tag shrink-0" title="This project names its tool versions for mise">
+              pinned
+            </span>
+          ) : app.runtime && mise ? (
+            <button
+              type="button"
+              className="tag shrink-0 hover:border-line-strong hover:text-fg"
+              disabled={busy !== null}
+              title="Write this project's tool version into its own mise.toml"
+              onClick={() => pin(app.id)}
+            >
+              pin {app.runtime}
+            </button>
+          ) : null}
         </p>
-        <p className="truncate pl-[15px] font-mono text-[11px] text-faint" title={app.command}>
-          {app.command}
+        {/* Where the code stands: one line, always there, so rows stay the same height */}
+        <p className="h-4 truncate pl-[15px] font-mono text-[11px] text-faint" title={app.git?.subject}>
+          {app.git ? (
+            <>
+              {app.git.branch}, {ago(app.git.last)}
+              {app.git.changes > 0 && <span className="text-muted">, {app.git.changes} uncommitted</span>}
+              <span className="hidden sm:inline">: {app.git.subject}</span>
+            </>
+          ) : (
+            app.command
+          )}
         </p>
       </div>
-      <div className="hidden items-center justify-end gap-1.5 sm:flex">
-        <span className="tag">{app.kind}</span>
-        {app.runtime && app.runtime !== app.kind && <span className="tag">{app.runtime}</span>}
-        {/* Tool versions: named by the project, or one click to name them */}
-        {app.pinned ? (
-          <span className="tag" title="This project names its tool versions for mise">
-            pinned
-          </span>
-        ) : app.runtime && mise ? (
-          <button
-            type="button"
-            className="tag hover:border-line-strong hover:text-fg"
-            disabled={busy !== null}
-            title="Write this project's tool version into its own mise.toml"
-            onClick={() => pin(app.id)}
-          >
-            pin
-          </button>
-        ) : null}
-      </div>
-      <p className="hidden text-right font-mono text-[12px] text-muted tabular-nums sm:block">{app.port}</p>
+      <p className="font-mono text-[12px] text-muted tabular-nums">{app.port}</p>
       {here ? (
-        <button type="button" className="btn" disabled={busy !== null} onClick={() => stop(slot.port)}>
+        <button type="button" className="btn w-14" disabled={busy !== null} onClick={() => stop(slot.port)}>
           Stop
         </button>
       ) : (
-        <button type="button" className="btn btn-solid" disabled={busy !== null} onClick={() => start(app.id)}>
+        <button type="button" className="btn btn-solid w-14" disabled={busy !== null} onClick={() => start(app.id)}>
           {busy === `start:${app.id}` ? '…' : 'Run'}
         </button>
       )}
@@ -160,23 +209,34 @@ function AppRow({ app, slot }: { app: App; slot?: Slot }) {
   )
 }
 
-function Project({ apps, slots }: { apps: App[]; slots: Slot[] }) {
+function ProjectCard({ project, apps, slots }: { project: Project; apps: App[]; slots: Slot[] }) {
   const busy = useCarbon((s) => s.busy)
   const startProject = useCarbon((s) => s.startProject)
-  const first = apps[0]!
+  const live = apps.filter((a) => slots.some((s) => s.app === a.id && s.status === 'running')).length
   return (
-    <section className="border-t border-line">
-      <div className="flex items-center justify-between gap-4 px-4 pt-3.5 pb-1.5">
-        <h3 className="min-w-0 truncate text-[14px] font-medium">
-          {first.project} <span className="font-mono text-[11px] font-normal text-faint">~/dev/{first.group}</span>
-        </h3>
+    <section className="flex min-w-0 flex-col bg-bg p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 text-[15px] font-medium tracking-tight">
+            <span className="truncate">{project.name}</span>
+            {live > 0 && <span className="font-mono text-[11px] font-normal text-on">{live} live</span>}
+          </h3>
+          <p className="truncate font-mono text-[11px] text-faint">~/{project.group}</p>
+        </div>
         {apps.length > 1 && (
-          <button type="button" className="btn" disabled={busy !== null} onClick={() => startProject(first.group, first.project)}>
-            {busy === `project:${first.group}/${first.project}` ? 'Starting…' : `Run all ${apps.length}`}
+          <button
+            type="button"
+            className="btn shrink-0"
+            disabled={busy !== null}
+            onClick={() => startProject(apps[0]!.group, project.name)}
+          >
+            {busy === `project:${apps[0]!.group}/${project.name}` ? 'Starting…' : `Run all ${apps.length}`}
           </button>
         )}
       </div>
-      <ul className="pb-2">
+      {/* What it says it is. Two lines kept whether or not it says anything, so cards in a row line up */}
+      <p className="mt-2 line-clamp-2 h-10 text-[13px] leading-5 text-muted">{project.description}</p>
+      <ul className="mt-1 border-t border-line pt-1">
         {apps.map((a) => (
           <AppRow key={a.id} app={a} slot={slots.find((s) => s.app === a.id)} />
         ))}
@@ -189,7 +249,8 @@ function Elsewhere({ item, app }: { item: Listener; app?: App }) {
   const busy = useCarbon((s) => s.busy)
   const kill = useCarbon((s) => s.kill)
   return (
-    <li className="grid grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-4 border-t border-line px-4 py-2.5">
+    <li className="grid grid-cols-[4.5rem_3.5rem_minmax(0,1fr)_auto] items-center gap-4 border-t border-line px-4 py-2.5">
+      <Preview port={item.port} live className="aspect-[16/10]" />
       <p className="font-mono text-[13px] tabular-nums">{item.port}</p>
       <div className="min-w-0">
         <p className="truncate text-[13px]">{app ? appName(app) : item.command}</p>
@@ -232,8 +293,9 @@ function AgentSession({ agent, apps }: { agent: Agent; apps: Map<string, App> })
         {agent.servers.map((s) => {
           const app = s.app ? apps.get(s.app) : undefined
           return (
-            <li key={s.pid} className="grid grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-4 px-4 py-2">
-              <p className="flex items-center gap-2 font-mono text-[13px] tabular-nums">{s.ports[0]}</p>
+            <li key={s.pid} className="grid grid-cols-[4.5rem_3.5rem_minmax(0,1fr)_auto] items-center gap-4 px-4 py-2">
+              <Preview port={s.ports[0]!} live className="aspect-[16/10]" />
+              <p className="font-mono text-[13px] tabular-nums">{s.ports[0]}</p>
               <div className="min-w-0">
                 <p className="truncate text-[13px]">
                   {app ? appName(app) : s.cwd} <span className="font-mono text-[11px] text-faint">up {since(s.since)}</span>
@@ -456,7 +518,7 @@ export function NewProject() {
         <div className="border-b border-line px-5 py-4">
           <h2 className="text-[15px] font-medium">New project</h2>
           <p className="mt-0.5 font-mono text-[11px] text-faint">
-            ~/dev/{into}/{name || 'name'}
+            ~/{into}/{name || 'name'}
           </p>
         </div>
         <div className="flex flex-col gap-5 px-5 py-5">
@@ -562,9 +624,6 @@ export function Shell() {
   }
 
   const byId = new Map(snap.apps.map((a) => [a.id, a]))
-  // Apps gathered into their projects, in the order the engine sends them
-  const projects = new Map<string, App[]>()
-  for (const a of snap.apps) projects.set(`${a.group}/${a.project}`, [...(projects.get(`${a.group}/${a.project}`) ?? []), a])
   // Every server running: on a Carbon port, started by hand elsewhere, or started by an agent off Carbon's ports
   const onSlots = new Set(snap.slots.map((s) => s.pid))
   const byAgents = snap.agents.flatMap((a) => a.servers).filter((s) => !onSlots.has(s.pid)).length
@@ -606,7 +665,12 @@ export function Shell() {
         {/* The rack. gap-px over a line-coloured background draws the hairlines between the ports */}
         <section aria-label="Ports" className="grid grid-cols-2 gap-px border-b border-line bg-line md:grid-cols-4">
           {snap.slots.map((s) => (
-            <Port key={s.port} slot={s} app={s.app ? byId.get(s.app) : undefined} />
+            <Port
+              key={s.port}
+              slot={s}
+              app={s.app ? byId.get(s.app) : undefined}
+              pictures={snap.slots.some((x) => x.status === 'running')}
+            />
           ))}
         </section>
 
@@ -636,11 +700,19 @@ export function Shell() {
 
         <section>
           <h2 className="px-4 py-3 text-[13px] font-medium">
-            Projects <span className="font-normal text-faint">running one puts it on its port and clears what was there</span>
+            Projects <span className="font-normal text-faint">running an app puts it on its port and clears what was there</span>
           </h2>
-          {[...projects.entries()].map(([key, apps]) => (
-            <Project key={key} apps={apps} slots={snap.slots} />
-          ))}
+          {/* gap-px over a line-coloured background draws the hairlines between the cards */}
+          <div className="grid grid-cols-1 gap-px border-t border-line bg-line lg:grid-cols-2 2xl:grid-cols-3">
+            {snap.projects.map((p) => (
+              <ProjectCard key={p.key} project={p} apps={p.apps.map((id) => byId.get(id)!).filter(Boolean)} slots={snap.slots} />
+            ))}
+            {/* Blank cells finish the last row, so the grid's line colour never shows as a block */}
+            {snap.projects.length % 2 === 1 && <div className="hidden bg-bg lg:block 2xl:hidden" />}
+            {Array.from({ length: (3 - (snap.projects.length % 3)) % 3 }, (_, i) => (
+              <div key={i} className="hidden bg-bg 2xl:block" />
+            ))}
+          </div>
         </section>
       </main>
 

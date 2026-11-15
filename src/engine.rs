@@ -1,4 +1,5 @@
-//! Carbon's engine: it reads ~/dev, starts and stops dev servers, and asks the OS what is listening.
+//! Carbon's engine: it finds the projects on this machine, starts and stops their dev servers, and asks the OS
+//! what is listening.
 //!
 //! The rules it keeps:
 //!   3000         Carbon itself, always.
@@ -27,6 +28,7 @@ use tokio::{
 
 use crate::agents::{self, Proc};
 use crate::detect::{self, Plan};
+use crate::places;
 
 pub const HUB_PORT: u16 = 3000;
 const POOL: RangeInclusive<u16> = 3004..=3019;
@@ -50,7 +52,7 @@ const FIXED: [(u16, Role, &str); 3] = [
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct App {
-    /// Path under ~/dev, e.g. "saas/cutwise/web"
+    /// Its folder, relative to home: "dev/work/thing/web"
     pub id: String,
     pub group: String,
     pub project: String,
@@ -58,6 +60,10 @@ pub struct App {
     pub part: Option<String>,
     #[serde(skip)]
     pub dir: PathBuf,
+    #[serde(skip)]
+    project_dir: PathBuf,
+    /// Where its code stands: branch, last commit, uncommitted changes
+    pub git: Option<Git>,
     pub role: Role,
     pub kind: &'static str,
     pub runtime: Option<&'static str>,
@@ -71,6 +77,31 @@ pub struct App {
     pub command: String,
     /// It reads its port from the environment rather than a flag
     pub by_env: bool,
+}
+
+/// What git says about a folder
+#[derive(Clone, Serialize)]
+pub struct Git {
+    branch: String,
+    /// When the last commit was made, in milliseconds
+    last: u64,
+    /// The last commit's first line
+    subject: String,
+    /// Files changed or added since then
+    changes: u32,
+}
+
+/// A project: one or more apps that belong together
+#[derive(Serialize)]
+pub struct Project {
+    /// "<group>/<name>"
+    key: String,
+    name: String,
+    /// The folder it is in, relative to home
+    group: String,
+    /// What it says it is, from its manifest or README
+    description: Option<String>,
+    apps: Vec<String>,
 }
 
 #[derive(Clone, Serialize)]
@@ -148,7 +179,9 @@ pub struct Snapshot {
     others: Vec<Listener>,
     /// The agent sessions that have servers running, with those servers
     agents: Vec<Agent>,
-    /// The folders directly under ~/dev, where a new project can go
+    /// The apps gathered into their projects
+    projects: Vec<Project>,
+    /// The folders a new project can go in, relative to home
     groups: Vec<String>,
     jobs: Vec<JobState>,
     mise: bool,
@@ -182,8 +215,20 @@ pub struct Job {
     pub exit: Exit,
 }
 
+/// A picture of what a port is serving, and whether a new one is being taken
+#[derive(Default)]
+struct Preview {
+    at: Option<Instant>,
+    png: Option<Arc<Vec<u8>>>,
+    busy: bool,
+}
+
 pub struct Hub {
-    pub dev: PathBuf,
+    pub home: PathBuf,
+    roots: Mutex<Option<(Instant, Vec<PathBuf>)>>,
+    groups: Mutex<Vec<String>>,
+    git: Mutex<HashMap<PathBuf, (Instant, Option<Git>)>>,
+    previews: Mutex<HashMap<u16, Preview>>,
     me: PathBuf,
     pub mise: Option<PathBuf>,
     managed: Mutex<HashMap<u16, Managed>>,
@@ -198,11 +243,24 @@ fn signal(pid: i32, sig: i32) {
     }
 }
 
+fn role_named(name: &str) -> Option<Role> {
+    match name {
+        "website" => Some(Role::Website),
+        "admin" => Some(Role::Admin),
+        "pro" => Some(Role::Pro),
+        "other" => Some(Role::Other),
+        _ => None,
+    }
+}
+
+/// The role a folder's name suggests. A project's own folder is its website; anything unrecognised is "other".
 fn role_of(part: Option<&str>) -> Role {
-    match part {
-        None | Some("web" | "website" | "site" | "www" | "landing") => Role::Website,
-        Some("admin") => Role::Admin,
-        Some("coach" | "pro") => Role::Pro,
+    match part.map(|p| p.rsplit('/').next().unwrap_or(p)) {
+        None | Some("web" | "website" | "site" | "www" | "landing" | "frontend" | "client") => {
+            Role::Website
+        }
+        Some("admin" | "backoffice") => Role::Admin,
+        Some("pro" | "dashboard" | "console" | "portal") => Role::Pro,
         Some(_) => Role::Other,
     }
 }
@@ -307,31 +365,63 @@ fn now() -> u64 {
         .unwrap_or(0)
 }
 
-fn folders(dir: &Path) -> Vec<PathBuf> {
-    const SKIP: [&str; 8] = [
-        "node_modules",
-        "dist",
-        "build",
-        "out",
-        "target",
-        "vendor",
-        ".next",
-        ".git",
-    ];
-    let mut found: Vec<PathBuf> = fs::read_dir(dir)
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-        .filter(|e| {
-            e.file_name()
-                .to_str()
-                .is_some_and(|n| !n.starts_with('.') && !SKIP.contains(&n))
-        })
-        .map(|e| e.path())
-        .collect();
-    found.sort();
-    found
+/// The Chromium-family browsers a preview can be taken with, in order of preference
+fn chromium() -> Option<PathBuf> {
+    let home = PathBuf::from(env::var("HOME").unwrap_or_default());
+    [
+        "Google Chrome",
+        "Chromium",
+        "Brave Browser",
+        "Microsoft Edge",
+        "Helium",
+        "Vivaldi",
+    ]
+    .iter()
+    .flat_map(|name| {
+        [PathBuf::from("/Applications"), home.join("Applications")]
+            .map(|apps| apps.join(format!("{name}.app/Contents/MacOS/{name}")))
+    })
+    .find(|binary| binary.is_file())
+}
+
+/// Takes a picture of http://localhost:<port> with a browser run without a window. Half size, so it is light to
+/// send and still sharp as a thumbnail.
+async fn capture(port: u16) -> Option<Vec<u8>> {
+    let browser = chromium()?;
+    let scratch = env::temp_dir().join(format!("carbon-preview-{port}"));
+    let shot = scratch.join("shot.png");
+    let _ = fs::create_dir_all(&scratch);
+    let mut cmd = Command::new(browser);
+    cmd.args([
+        "--headless=new",
+        "--disable-gpu",
+        "--hide-scrollbars",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--mute-audio",
+    ])
+    .args([
+        "--window-size=1280,800",
+        "--force-device-scale-factor=0.5",
+        "--virtual-time-budget=6000",
+    ])
+    .arg(format!(
+        "--user-data-dir={}",
+        scratch.join("profile").display()
+    ))
+    .arg(format!("--screenshot={}", shot.display()))
+    .arg(format!("http://localhost:{port}/"))
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .kill_on_drop(true);
+    let finished = tokio::time::timeout(Duration::from_secs(25), cmd.status()).await;
+    let png = finished
+        .ok()
+        .and_then(Result::ok)
+        .and_then(|_| fs::read(&shot).ok());
+    let _ = fs::remove_file(&shot);
+    png
 }
 
 impl Hub {
@@ -348,7 +438,11 @@ impl Hub {
             ])
             .find(|p| p.is_file());
         Hub {
-            dev: home.join("dev"),
+            home,
+            roots: Mutex::new(None),
+            groups: Mutex::new(Vec::new()),
+            git: Mutex::new(HashMap::new()),
+            previews: Mutex::new(HashMap::new()),
             // Where Carbon's own source lives, so it never lists itself as something to run
             me: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
             mise,
@@ -412,8 +506,11 @@ impl Hub {
         }
         cmd.current_dir(dir)
             .env("PATH", env::join_paths(path).unwrap_or_default())
-            // Everything under ~/dev is ours, so its mise files are trusted without a prompt
-            .env("MISE_TRUSTED_CONFIG_PATHS", &self.dev)
+            // The places code lives are ours, so their mise files are trusted without a prompt
+            .env(
+                "MISE_TRUSTED_CONFIG_PATHS",
+                env::join_paths(self.roots()).unwrap_or_default(),
+            )
             .env("MISE_YES", "1")
             .env("BROWSER", "none")
             .env("FORCE_COLOR", "0")
@@ -454,49 +551,171 @@ impl Hub {
         *self.cache.lock().unwrap() = None;
     }
 
-    /// Every folder under ~/dev (group/project, and one level inside) that Carbon knows how to run
+    /// The places code lives on this machine. Worked out from the home folder (or read from the config) and kept
+    /// for a minute, since folders like these don't come and go
+    pub fn roots(&self) -> Vec<PathBuf> {
+        if let Some((at, roots)) = self.roots.lock().unwrap().as_ref() {
+            if at.elapsed() < Duration::from_secs(60) {
+                return roots.clone();
+            }
+        }
+        let roots = places::roots(&self.home, &places::config(&self.home));
+        *self.roots.lock().unwrap() = Some((Instant::now(), roots.clone()));
+        roots
+    }
+
+    /// True for a folder inside one of the places code lives
+    pub fn within(&self, path: &Path) -> bool {
+        self.roots()
+            .iter()
+            .any(|root| path.starts_with(root) && path != root)
+    }
+
+    /// The folders a new project can be created in, relative to home
+    pub fn groups(&self) -> Vec<String> {
+        self.discover();
+        self.groups.lock().unwrap().clone()
+    }
+
+    /// Opens an address in the browser the config names, or the system's default
+    pub fn open(&self, url: &str) {
+        let named = places::config(&self.home).browser.is_some_and(|browser| {
+            std::process::Command::new("open")
+                .args(["-a", &browser, url])
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+        });
+        if !named {
+            let _ = std::process::Command::new("open").arg(url).status();
+        }
+    }
+
+    /// Every folder in the places code lives that Carbon knows how to run
     fn discover(&self) -> Vec<App> {
         if let Some((at, apps)) = self.cache.lock().unwrap().as_ref() {
             if at.elapsed() < Duration::from_secs(5) {
                 return apps.clone();
             }
         }
-        let projects: Vec<PathBuf> = folders(&self.dev).iter().flat_map(|g| folders(g)).collect();
-        let mut dirs = projects.clone();
-        dirs.extend(projects.iter().flat_map(|p| folders(p)));
+        let config = places::config(&self.home);
+        let (spots, groups) = places::survey(&self.home, &self.roots());
         let mut apps = Vec::new();
-        for dir in dirs {
+        for spot in spots {
             // Carbon doesn't list itself, or the page it is made of
-            if dir.starts_with(&self.me) {
+            if spot.dir.starts_with(&self.me) {
                 continue;
             }
-            let Some(plan) = detect::detect(&dir) else {
+            let Some(plan) = detect::detect(&spot.dir) else {
                 continue;
             };
-            let Ok(rel) = dir.strip_prefix(&self.dev) else {
-                continue;
-            };
-            let parts: Vec<&str> = rel.iter().filter_map(|p| p.to_str()).collect();
-            let part = parts.get(2).map(|p| p.to_string());
+            let id = spot
+                .dir
+                .strip_prefix(&self.home)
+                .unwrap_or(&spot.dir)
+                .iter()
+                .filter_map(|p| p.to_str())
+                .collect::<Vec<_>>()
+                .join("/");
+            // A role given by hand in the config wins over what the folder's name suggests
+            let role = config
+                .roles
+                .get(&spot.dir)
+                .and_then(|r| role_named(r))
+                .unwrap_or_else(|| role_of(spot.part.as_deref()));
             apps.push(App {
-                id: parts.join("/"),
-                group: parts.first().unwrap_or(&"").to_string(),
-                project: parts.get(1).unwrap_or(&"").to_string(),
-                role: role_of(part.as_deref()),
-                part,
+                id,
+                group: spot.group,
+                project: spot.project,
+                role,
+                part: spot.part,
                 kind: plan.kind,
                 runtime: plan.runtime,
-                pinned: detect::pinned(&dir),
+                pinned: detect::pinned(&spot.dir),
                 by_env: plan.by_env(),
                 plan,
-                dir,
+                dir: spot.dir,
+                project_dir: spot.project_dir,
+                git: None,
                 port: 0,
                 command: String::new(),
             });
         }
         apps.sort_by(|a, b| a.id.cmp(&b.id));
+        *self.groups.lock().unwrap() = groups;
         *self.cache.lock().unwrap() = Some((Instant::now(), apps.clone()));
         apps
+    }
+
+    /// What git says about a folder, asked at most every half minute
+    async fn git(&self, dir: &Path) -> Option<Git> {
+        if let Some((at, git)) = self.git.lock().unwrap().get(dir) {
+            if at.elapsed() < Duration::from_secs(30) {
+                return git.clone();
+            }
+        }
+        let run = async |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .stderr(Stdio::null())
+                .output()
+                .await
+                .ok()?;
+            out.status
+                .success()
+                .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+        };
+        let git = async {
+            let log = run(&["log", "-1", "--format=%ct%x09%s"]).await?;
+            let (when, subject) = log.trim().split_once('\t')?;
+            let status = run(&["status", "--porcelain=v2", "--branch"]).await?;
+            let branch = status
+                .lines()
+                .find_map(|l| l.strip_prefix("# branch.head "))
+                .unwrap_or("")
+                .to_string();
+            let changes = status.lines().filter(|l| !l.starts_with('#')).count() as u32;
+            Some(Git {
+                branch,
+                last: when.parse::<u64>().ok()? * 1000,
+                subject: subject.chars().take(120).collect(),
+                changes,
+            })
+        }
+        .await;
+        self.git
+            .lock()
+            .unwrap()
+            .insert(dir.to_path_buf(), (Instant::now(), git.clone()));
+        git
+    }
+
+    /// A picture of what a port is serving, for the page to show. The picture is taken in the background by a
+    /// Chromium-family browser run without a window, and kept for twenty seconds; asking again just returns the
+    /// last one while a new one is taken. None until the first is ready, or when no such browser is installed.
+    pub fn preview(self: &Arc<Self>, port: u16) -> Option<Arc<Vec<u8>>> {
+        let mut previews = self.previews.lock().unwrap();
+        let entry = previews.entry(port).or_default();
+        let stale = entry
+            .at
+            .is_none_or(|at| at.elapsed() > Duration::from_secs(20));
+        if stale && !entry.busy {
+            entry.busy = true;
+            let hub = self.clone();
+            tokio::spawn(async move {
+                let png = capture(port).await;
+                let mut previews = hub.previews.lock().unwrap();
+                let entry = previews.entry(port).or_default();
+                entry.busy = false;
+                entry.at = Some(Instant::now());
+                if let Some(png) = png {
+                    entry.png = Some(Arc::new(png));
+                }
+            });
+        }
+        entry.png.clone()
     }
 
     /// Every TCP port something on this machine is listening on, with the folder that process runs in
@@ -552,7 +771,7 @@ impl Hub {
 
     /// A dev server is a small family: the command that was typed, the server it spawned, its helpers. Stopping
     /// only the process that holds the port leaves the rest running, or lets its parent start it again. So from
-    /// that process, climb to the highest ancestor that is still a program running inside ~/dev (never the shell,
+    /// that process, climb to the highest ancestor that is still a program running where code lives (never the shell,
     /// terminal or agent it was started from), and return it with everything beneath it.
     async fn family(&self, pid: i32) -> Vec<i32> {
         const NOT_OURS: [&str; 13] = [
@@ -579,9 +798,7 @@ impl Hub {
             let name = proc.map(Proc::name).unwrap_or("");
             // Never climb into an agent, whatever it is called on disk
             let agent = proc.is_some_and(|p| agents::agent_of(p).is_some());
-            let inside = cwds
-                .get(&p)
-                .is_some_and(|c| Path::new(c).starts_with(&self.dev) && Path::new(c) != self.dev);
+            let inside = cwds.get(&p).is_some_and(|c| self.within(Path::new(c)));
             if p == me || agent || NOT_OURS.contains(&name) || !inside {
                 break;
             }
@@ -720,7 +937,7 @@ impl Hub {
         Ok(ports)
     }
 
-    /// Stops one server outside the slots. Only ever a process that is listening from inside ~/dev
+    /// Stops one server outside the slots. Only ever a process listening from inside one of the places code lives
     pub async fn kill(&self, pid: i32) -> Result<(), String> {
         let me = std::process::id() as i32;
         // Something an agent started: stop it and everything it spawned
@@ -734,9 +951,7 @@ impl Hub {
         let ours = self.listening(&[]).await.into_iter().any(|l| {
             l.pid == pid
                 && l.pid != me
-                && l.cwd
-                    .as_deref()
-                    .is_some_and(|c| Path::new(c).starts_with(&self.dev))
+                && l.cwd.as_deref().is_some_and(|c| self.within(Path::new(c)))
         });
         if !ours {
             return Err("Not something Carbon can stop".into());
@@ -763,7 +978,10 @@ impl Hub {
         let mut cmd = Command::new(mise);
         cmd.args(["use", "--pin", tool])
             .current_dir(&app.dir)
-            .env("MISE_TRUSTED_CONFIG_PATHS", &self.dev)
+            .env(
+                "MISE_TRUSTED_CONFIG_PATHS",
+                env::join_paths(self.roots()).unwrap_or_default(),
+            )
             .env("MISE_YES", "1");
         let key = self.job(
             format!("pin:{id}"),
@@ -991,9 +1209,33 @@ impl Hub {
         for app in &mut apps {
             app.port = self.port_for(app, &live);
             app.command = app.plan.command(app.port);
+            app.git = self.git(&app.dir).await;
+        }
+        // Apps gathered into their projects, each project saying what it is
+        let mut projects: Vec<Project> = Vec::new();
+        for app in &apps {
+            let key = if app.group.is_empty() {
+                app.project.clone()
+            } else {
+                format!("{}/{}", app.group, app.project)
+            };
+            match projects.iter_mut().find(|p| p.key == key) {
+                Some(project) => project.apps.push(app.id.clone()),
+                None => {
+                    // Only what the project itself says: a part's README describes the part, not the whole
+                    let places = [app.project_dir.as_path()];
+                    projects.push(Project {
+                        key,
+                        name: app.project.clone(),
+                        group: app.group.clone(),
+                        description: places::describe(&places),
+                        apps: vec![app.id.clone()],
+                    });
+                }
+            }
         }
 
-        // Elsewhere: dev servers under ~/dev that are not on a Carbon port (started by hand, or by an agent).
+        // Elsewhere: dev servers in the places code lives that are not on a Carbon port (started by hand, or by an agent).
         // Ports the system hands out by itself (49152 and up) and debugger ports are a server's own plumbing
         let ours = |port: u16| {
             FIXED.iter().any(|f| f.0 == port) || POOL.contains(&port) || port == HUB_PORT
@@ -1004,18 +1246,11 @@ impl Hub {
             .filter(|l| !ours(l.port) && !plumbing(l.port) && l.pid != me)
             // What an agent started is listed under that agent, not here
             .filter(|l| !by.contains_key(&l.pid))
-            .filter(|l| {
-                l.cwd
-                    .as_deref()
-                    .is_some_and(|c| Path::new(c).starts_with(&self.dev))
-            })
+            .filter(|l| l.cwd.as_deref().is_some_and(|c| self.within(Path::new(c))))
             .cloned()
             .collect();
 
-        let groups = folders(&self.dev)
-            .iter()
-            .filter_map(|g| g.file_name()?.to_str().map(String::from))
-            .collect();
+        let groups = self.groups.lock().unwrap().clone();
         let jobs = self
             .jobs
             .lock()
@@ -1036,6 +1271,7 @@ impl Hub {
             apps,
             others,
             agents,
+            projects,
             groups,
             jobs,
             mise: self.mise.is_some(),

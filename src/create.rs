@@ -1,4 +1,4 @@
-//! Creating a new project under ~/dev from a template, with its tools pinned by mise from the first commit.
+//! Creating a new project, in one of the places code lives, from a template, with its tools pinned by mise from the first commit.
 
 use serde::Serialize;
 
@@ -29,7 +29,7 @@ pub const TEMPLATES: [Template; 3] = [
     },
 ];
 
-/// Starts creating `~/dev/<group>/<name>` and returns the key of the job doing it
+/// Starts creating `~/<group>/<name>` and returns the key of the job doing it
 pub fn create(hub: &Hub, group: &str, name: &str, template: &str) -> Result<String, String> {
     let named_well = !name.is_empty()
         && name.len() <= 40
@@ -40,13 +40,13 @@ pub fn create(hub: &Hub, group: &str, name: &str, template: &str) -> Result<Stri
     if !named_well {
         return Err("Use lowercase letters, numbers and dashes for the name".into());
     }
-    // The group must be one of the folders that is really there: never a path
-    let parent = hub.dev.join(group);
-    if group.contains(['/', '.']) || !parent.is_dir() {
-        return Err(format!("There is no ~/dev/{group}"));
+    // The group must be one of the folders Carbon itself found: never a path from outside
+    if !hub.groups().iter().any(|g| g == group) {
+        return Err(format!("~/{group} isn't somewhere Carbon keeps projects"));
     }
+    let parent = hub.home.join(group);
     if parent.join(name).exists() {
-        return Err(format!("~/dev/{group}/{name} already exists"));
+        return Err(format!("~/{group}/{name} already exists"));
     }
 
     let scaffold = |extra: &str| {

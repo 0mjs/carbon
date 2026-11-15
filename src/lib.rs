@@ -9,4 +9,5 @@ pub mod create;
 pub mod detect;
 pub mod engine;
 pub mod harness;
+pub mod places;
 pub mod server;

@@ -11,7 +11,7 @@ use carbon::{
 use serde_json::{Value, json};
 
 const HELP: &str = "\
-carbon: the local hub for everything in ~/dev, always on port 3000
+carbon: the local hub for your dev servers, always on port 3000
 
   carbon                  run the hub (the same as `carbon serve`)
   carbon ls               what is on each port, and what else is running
@@ -21,8 +21,8 @@ carbon: the local hub for everything in ~/dev, always on port 3000
   carbon stop <app|port>  stop what is on a port
   carbon open <app|port>  open it in the browser
   carbon logs <port> [-f] what a server Carbon started has printed; -f keeps following
-  carbon new <group>/<name> [start|spa|bun]
-                          create a project under ~/dev (TanStack Start by default)
+  carbon new <folder>/<name> [start|spa|bun]
+                          create a project (TanStack Start by default)
 
 Set CARBON_OPEN=0 to stop `carbon serve` opening the dashboard.";
 
@@ -67,14 +67,9 @@ fn matching<'a>(apps: &'a [Value], word: &str) -> Vec<&'a Value> {
     Vec::new()
 }
 
-fn open(port: u64) {
-    let url = format!("http://localhost:{port}");
-    let helium = std::process::Command::new("open")
-        .args(["-a", "Helium", &url])
-        .status();
-    if !helium.is_ok_and(|s| s.success()) {
-        let _ = std::process::Command::new("open").arg(&url).status();
-    }
+/// Asks the hub to open a port in the browser it is set up to use
+fn open(port: u64) -> Result<(), String> {
+    client::post("/api/open", json!({ "port": port })).map(|_| ())
 }
 
 fn ls() -> Result<(), String> {
@@ -185,7 +180,7 @@ fn run(word: &str) -> Result<(), String> {
     }
     match matching(&apps, word).as_slice() {
         [] => Err(format!(
-            "Nothing under ~/dev matches \"{word}\". `carbon ls` shows what is running; the dashboard lists every app."
+            "No project matches \"{word}\". `carbon ls` shows what is running; the dashboard lists every app."
         )),
         [app] => {
             let port = client::post("/api/start", json!({ "id": app["id"] }))?["port"].clone();
@@ -253,8 +248,8 @@ fn logs(word: &str, follow: bool) -> Result<(), String> {
 
 fn new(target: &str, template: &str) -> Result<(), String> {
     let (group, name) = target
-        .split_once('/')
-        .ok_or("Say where and what: carbon new <group>/<name>, e.g. carbon new lab/thing")?;
+        .rsplit_once('/')
+        .ok_or("Say where and what: carbon new <folder>/<name>, e.g. carbon new dev/thing")?;
     let job = client::post(
         "/api/create",
         json!({ "group": group, "name": name, "template": template }),
@@ -281,8 +276,8 @@ fn new(target: &str, template: &str) -> Result<(), String> {
             .map(|j| text(&j["status"]).to_string());
         match status.as_deref() {
             Some("running") => thread::sleep(Duration::from_millis(500)),
-            Some("done") => return Ok(println!("Created ~/dev/{group}/{name}")),
-            _ => return Err(format!("Creating ~/dev/{group}/{name} failed.")),
+            Some("done") => return Ok(println!("Created ~/{group}/{name}")),
+            _ => return Err(format!("Creating ~/{group}/{name} failed.")),
         }
     }
 }
@@ -303,9 +298,9 @@ async fn serve() -> Result<(), String> {
             " (mise not found: servers run without it)"
         }
     );
-    // Bring the dashboard up in Helium, the browser we use. CARBON_OPEN=0 skips it
+    // Bring the dashboard up in the browser. CARBON_OPEN=0 skips it
     if env::var("CARBON_OPEN").as_deref() != Ok("0") {
-        open(HUB_PORT as u64);
+        hub.open(&format!("http://localhost:{HUB_PORT}"));
     }
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|e| e.to_string())?;
@@ -330,8 +325,8 @@ async fn main() -> ExitCode {
         (Some("stop"), Some(what)) => port_of(what).and_then(|port| {
             client::post("/api/stop", json!({ "port": port })).map(|_| println!("Stopped {port}"))
         }),
-        (Some("open"), Some(what)) => port_of(what).map(open),
-        (Some("open"), None) => client::get("/api/state").map(|_| open(HUB_PORT as u64)),
+        (Some("open"), Some(what)) => port_of(what).and_then(open),
+        (Some("open"), None) => client::post("/api/open", json!({ "port": HUB_PORT })).map(|_| ()),
         (Some("logs"), Some(what)) => logs(what, args.iter().any(|a| a == "-f" || a == "--follow")),
         (Some("new"), Some(target)) => new(target, arg(2).unwrap_or("start")),
         (Some("run" | "start" | "stop" | "logs"), None) => Err(needs("app or port")),
