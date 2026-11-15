@@ -24,9 +24,10 @@ page) and Rust from [rustup](https://rustup.rs), which picks up the version in `
 
 ```bash
 git clone https://github.com/0mjs/carbon && cd carbon
-mise run app        # build Carbon.app into dist/ and open it
-mise run install    # install the `carbon` command into ~/.cargo/bin
-mise run start      # or just run the hub in this terminal
+mise run install-app  # build Carbon.app and put it in /Applications
+mise run app          # build Carbon.app into dist/ and open it
+mise run install      # install the `carbon` command into ~/.cargo/bin
+mise run start        # or just run the hub in this terminal
 ```
 
 - **The app** is the hub: it runs the engine inside itself and draws its window natively with

@@ -11,6 +11,10 @@ run = ["cd ui && bun install && bun run build", "cargo run --release -- serve"]
 description = "Build Carbon.app into dist/ and open it"
 run = ["./desktop/bundle.sh", "open dist/Carbon.app"]
 
+[tasks.install-app]
+description = "Build Carbon.app and put it in /Applications (macOS)"
+run = ["./desktop/bundle.sh", "rm -rf /Applications/Carbon.app", "ditto dist/Carbon.app /Applications/Carbon.app", "echo Installed /Applications/Carbon.app"]
+
 [tasks.install]
 description = "Install the `carbon` command into ~/.cargo/bin"
 run = ["cd ui && bun install && bun run build", "cargo install --path . --locked"]
