@@ -1,0 +1,19 @@
+# Carbon's own tools and commands.
+[tools]
+bun = "latest"
+
+[tasks.start]
+description = "Build the page, then run the hub on port 3000 in this terminal"
+run = ["cd ui && bun install && bun run build", "cargo run --release -- serve"]
+
+[tasks.app]
+description = "Build Carbon.app into dist/ and open it"
+run = ["./desktop/bundle.sh", "open dist/Carbon.app"]
+
+[tasks.install]
+description = "Install the `carbon` command into ~/.cargo/bin"
+run = ["cd ui && bun install && bun run build", "cargo install --path . --locked"]
+
+[tasks.check]
+description = "Tests, types, lint and format for every part"
+run = ["cargo test", "cd ui && bun run check"]

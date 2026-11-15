@@ -1,0 +1,16 @@
+[package]
+name = "carbon-desktop"
+version = "0.3.0"
+edition = "2024"
+description = "Carbon as a macOS app: the hub and its dashboard in one window, with a menu-bar icon"
+
+[[bin]]
+name = "Carbon"
+path = "src/main.rs"
+
+[dependencies]
+carbon = { path = ".." }
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+
+[build-dependencies]
+tauri-build = { version = "2" }

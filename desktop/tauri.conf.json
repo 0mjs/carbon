@@ -1,0 +1,9 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Carbon",
+  "version": "0.3.0",
+  "identifier": "sh.carbonsoft.carbon",
+  "build": { "frontendDist": "../ui/dist" },
+  "app": { "windows": [], "security": { "csp": null } },
+  "bundle": { "active": false, "icon": ["icons/icon.png", "icons/icon.icns"] }
+}

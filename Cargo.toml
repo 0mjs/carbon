@@ -1,0 +1,30 @@
+[workspace]
+members = [".", "desktop"]
+resolver = "3"
+
+[package]
+name = "carbon"
+version = "0.3.0"
+edition = "2024"
+description = "The local hub for everything in ~/dev: always on port 3000, it starts, stops and shows every dev server"
+
+[lib]
+name = "carbon"
+path = "src/lib.rs"
+
+[[bin]]
+name = "carbon"
+path = "src/main.rs"
+
+[dependencies]
+axum = "0.8"
+libc = "0.2"
+rust-embed = { version = "8", features = ["mime-guess"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "signal", "time", "fs"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true

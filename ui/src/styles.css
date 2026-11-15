@@ -1,0 +1,145 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+:root {
+  --bg: #ffffff;
+  --panel: #fafafa;
+  --fg: #0a0a0a;
+  --muted: #666666;
+  --faint: #8f8f8f;
+  --border: #eaeaea;
+  --border-strong: #d4d4d4;
+  --on: #0f9d58;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --panel: #0a0a0a;
+    --fg: #ededed;
+    --muted: #a1a1a1;
+    --faint: #6b6b6b;
+    --border: #1f1f1f;
+    --border-strong: #2e2e2e;
+    --on: #3ddc84;
+    color-scheme: dark;
+  }
+}
+
+@theme {
+  --font-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --font-mono: 'Geist Mono Variable', ui-monospace, monospace;
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-on: var(--on);
+}
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 2px solid var(--fg);
+    outline-offset: 2px;
+  }
+  button {
+    cursor: pointer;
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.4;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex h-7 items-center justify-center gap-1.5 rounded-md border border-line px-2.5 font-mono text-[11px] whitespace-nowrap text-muted transition-colors;
+  }
+  .btn:not(:disabled):hover {
+    border-color: var(--border-strong);
+    color: var(--fg);
+    background: var(--panel);
+  }
+  .btn-solid {
+    background: var(--fg);
+    border-color: var(--fg);
+    color: var(--bg);
+  }
+  .btn-solid:not(:disabled):hover {
+    background: var(--fg);
+    color: var(--bg);
+    opacity: 0.85;
+  }
+  .tag {
+    @apply inline-flex h-5 items-center rounded border border-line px-1.5 font-mono text-[10px] text-faint;
+  }
+}
+
+/* A port's light: off, breathing while it starts, lit with a soft halo once it answers, red if it fell over */
+.led {
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: var(--border-strong);
+}
+.led[data-status='running'] {
+  background: var(--on);
+  box-shadow:
+    0 0 0 3px color-mix(in oklab, var(--on) 22%, transparent),
+    0 0 12px var(--on);
+}
+.led[data-status='starting'] {
+  background: #f5a524;
+  animation: breathe 1s ease-in-out infinite;
+}
+.led[data-status='exited'] {
+  background: #e5484d;
+}
+@keyframes breathe {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+/* A running port carries a signal along its top edge */
+.port[data-status='running']::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--on), transparent);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: signal 2.4s linear infinite;
+}
+@keyframes signal {
+  from {
+    background-position: -100% 0;
+  }
+  to {
+    background-position: 300% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .led[data-status='starting'],
+  .port[data-status='running']::before {
+    animation: none;
+  }
+}
