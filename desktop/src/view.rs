@@ -1,17 +1,18 @@
 //! The window: a list on the left that chooses what to look at, and a sheet on the right that shows it.
-//! The list is "Running" (every server on the machine) and then every project, in the folders they live in.
+//! The list is "Running" (every server on the machine), the projects pinned to the top, and then every project
+//! in the folders they live in.
 
 use carbon::engine::{Project, Snapshot};
 use rune::{Cursor, Cx, El, Key, ScrollSpec, TextEdit, Tx, col, el, row, spacer, text, text_input};
 
 use crate::{
     Page, State, TITLEBAR,
-    look::{Kind, Look, button, dot, look, mono, sans, tile},
+    look::{Kind, Look, button, dot, icon, look, mono, sans, tile},
     model::{self, Server},
-    pages,
+    pages, setup,
 };
 
-const LIST: f32 = 248.0;
+const LIST: f32 = 252.0;
 
 /// One row of the list
 fn entry(key: String, chosen: bool, l: &Look, page: Page) -> El {
@@ -22,11 +23,17 @@ fn entry(key: String, chosen: bool, l: &Look, page: Page) -> El {
         .px(8.0)
         .gap(10.0)
         .center_y()
-        .radius(8.0)
+        .radius(9.0)
         .cursor(Cursor::Pointer)
-        .on_press(move |s: &mut State| s.go(page.clone()));
+        .hover_group()
+        .on_press(move |s: &mut State| match &page {
+            Page::Setup => s.open_setup(),
+            page => s.go(page.clone()),
+        });
     if chosen {
-        entry.fill(l.chosen)
+        entry
+            .gradient(l.quiet.0, l.quiet.1)
+            .border_gradient(1.0, l.rim.0, l.rim.1)
     } else {
         entry.hover(l.over)
     }
@@ -35,20 +42,23 @@ fn entry(key: String, chosen: bool, l: &Look, page: Page) -> El {
 fn search(s: &State, l: &Look) -> El {
     row()
         .key("search-field")
-        .h(30.0)
+        .h(32.0)
         .mx(12.0)
         .px(10.0)
+        .gap(8.0)
         .center_y()
-        .radius(8.0)
-        .fill(l.over)
+        .radius(9.0)
+        .fill(l.well)
+        .border(1.0, l.line)
+        .child(icon(s, "search", 13.0).opacity(0.45))
         .child(
             text_input(&s.search, sans(13.0, 400.0))
                 .key("search")
                 .single_line()
                 .grow(1.0)
-                .color(l.text)
+                .color(l.ink)
                 .placeholder("Search", l.faint)
-                .caret(l.accent, l.accent.alpha(0.3))
+                .caret(l.ink, l.ink.alpha(0.25))
                 .on_edit(|s: &mut State| &mut s.search)
                 // Return goes to the first project found, and Escape gives the whole list back
                 .on_submit(|s: &mut State, _: &mut Tx| {
@@ -90,9 +100,57 @@ fn found<'a>(snap: &'a Snapshot, typed: &str) -> Vec<&'a Project> {
     projects
 }
 
+/// A small heading over part of the list
+fn heading(key: String, name: &str, l: &Look) -> El {
+    text(name)
+        .key(key)
+        .font(sans(11.5, 600.0))
+        .color(l.faint)
+        .mx(18.0)
+        .mt(18.0)
+        .mb(6.0)
+}
+
+/// A project in the list: its face and name, a pin that shows under the pointer, and a light when it is live
+fn project_entry(s: &State, project: &Project, servers: &[Server], l: &Look) -> El {
+    let live = servers.iter().any(|server| {
+        server.live() && server.app.is_some_and(|app| project.apps.contains(&app.id))
+    });
+    let (key, pinned) = (project.key.clone(), project.pinned);
+    let pin = row()
+        .key(format!("pin-{}", project.key))
+        .size(22.0, 22.0)
+        .center()
+        .radius(6.0)
+        .hover(l.over)
+        .group_opacity(0.0, if pinned { 1.0 } else { 0.5 })
+        .help(if pinned { "Unpin" } else { "Pin to the top" })
+        .on_press(move |s: &mut State| s.pin(key.clone(), !pinned))
+        .child(icon(s, "pin", 13.0));
+    let mut entry = entry(
+        format!("go-{}", project.key),
+        s.page == Page::Project(project.key.clone()),
+        l,
+        Page::Project(project.key.clone()),
+    )
+    .child(tile(s, project, 22.0, l))
+    .child(
+        text(project.title.clone())
+            .font(sans(13.0, 500.0))
+            .color(l.ink)
+            .truncate()
+            .grow(1.0)
+            .min_w(0.0),
+    )
+    .child(pin);
+    if live {
+        entry = entry.child(dot("running", l));
+    }
+    entry
+}
+
 fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> El {
     let running = servers.iter().filter(|server| server.live()).count();
-
     let mut home = entry(
         "go-running".into(),
         s.page == Page::Running,
@@ -105,7 +163,7 @@ fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> E
             .center()
             .child(dot(if running > 0 { "running" } else { "idle" }, l)),
     )
-    .child(text("Running").font(sans(13.0, 500.0)).color(l.text))
+    .child(text("Running").font(sans(13.0, 500.0)).color(l.ink))
     .child(spacer());
     if running > 0 {
         home = home.child(
@@ -116,61 +174,57 @@ fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> E
     }
 
     let projects = found(snap, &s.search.text);
-
     let mut rows = col().key("projects").pb(12.0);
+    // Pinned projects come first, under a heading of their own, and keep out of the folders below
+    let pinned: Vec<&&Project> = projects.iter().filter(|project| project.pinned).collect();
+    if !pinned.is_empty() {
+        rows = rows.child(heading("folder-pinned".into(), "Pinned", l));
+        for project in pinned {
+            rows = rows.child(project_entry(s, project, servers, l));
+        }
+    }
     let mut folder: Option<&str> = None;
-    for project in &projects {
+    for project in projects.iter().filter(|project| !project.pinned) {
         if folder != Some(project.group.as_str()) {
             folder = Some(project.group.as_str());
-            // The folder's own name is enough: "saas", not "dev/saas"
+            // The folder's own name is enough: "work", not "dev/work"
             let name = project
                 .group
                 .rsplit('/')
                 .next()
                 .filter(|name| !name.is_empty())
                 .unwrap_or("home");
-            rows = rows.child(
-                text(name)
-                    .key(format!("folder-{}", project.group))
-                    .font(sans(11.5, 600.0))
-                    .color(l.faint)
-                    .mx(18.0)
-                    .mt(18.0)
-                    .mb(6.0),
-            );
+            rows = rows.child(heading(format!("folder-{}", project.group), name, l));
         }
-        let live = servers.iter().any(|server| {
-            server.live() && server.app.is_some_and(|app| project.apps.contains(&app.id))
-        });
-        let mut one = entry(
-            format!("go-{}", project.key),
-            s.page == Page::Project(project.key.clone()),
-            l,
-            Page::Project(project.key.clone()),
-        )
-        .child(tile(s, project, 22.0, l))
-        .child(
-            text(project.title.clone())
-                .font(sans(13.0, 500.0))
-                .color(l.text)
-                .truncate()
-                .grow(1.0)
-                .min_w(0.0),
-        );
-        if live {
-            one = one.child(dot("running", l));
-        }
-        rows = rows.child(one);
+        rows = rows.child(project_entry(s, project, servers, l));
     }
     if projects.is_empty() {
+        let none = if s.search.text.trim().is_empty() {
+            "No projects yet."
+        } else {
+            "No project is called that."
+        };
         rows = rows.child(
-            text("No project is called that.")
+            text(none)
                 .font(sans(12.5, 400.0))
                 .color(l.faint)
                 .mx(18.0)
                 .mt(18.0),
         );
     }
+
+    let choose = entry("go-setup".into(), s.page == Page::Setup, l, Page::Setup)
+        .child(
+            row()
+                .size(22.0, 22.0)
+                .center()
+                .child(icon(s, "folder-search", 14.0).opacity(0.7)),
+        )
+        .child(
+            text("Choose projects")
+                .font(sans(13.0, 500.0))
+                .color(l.soft),
+        );
 
     col()
         .key("list")
@@ -188,6 +242,9 @@ fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> E
             .grow(1.0)
             .min_h(0.0),
         )
+        .child(el().h(8.0))
+        .child(choose)
+        .child(el().h(12.0))
 }
 
 /// Something the engine refused, said plainly at the top of the sheet until dismissed
@@ -200,8 +257,9 @@ fn refusal(why: &str, l: &Look) -> El {
         .py(10.0)
         .gap(12.0)
         .center_y()
-        .radius(10.0)
+        .radius(11.0)
         .fill(l.bad.alpha(0.12))
+        .border(1.0, l.bad.alpha(0.25))
         .child(
             text(why.to_string())
                 .font(mono(12.0))
@@ -222,7 +280,7 @@ fn refusal(why: &str, l: &Look) -> El {
 
 pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let l = look(cx);
-    let window = row().w_full().h_full().fill(l.window);
+    let window = row().w_full().h_full().fill(l.void);
     let Some(snap) = &s.snap else {
         return window.center().window_drag().child(
             text("Looking at what is running…")
@@ -233,18 +291,21 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     let servers = model::servers(snap);
     // As many cards across as fit comfortably, going by how wide the sheet was last drawn
     let across = cx.layout_size("sheet").map_or(2, |[width, _]| {
-        ((width - 48.0) / 330.0).floor().clamp(1.0, 4.0) as usize
+        ((width - 48.0) / 340.0).floor().clamp(1.0, 4.0) as usize
     });
 
     let chosen = match &s.page {
         Page::Project(key) => snap.projects.iter().find(|project| &project.key == key),
-        Page::Running => None,
+        _ => None,
     };
-    let page = match chosen {
-        Some(project) => pages::project(s, snap, &servers, project, &l),
-        None => pages::running(s, snap, &servers, across, &l),
+    let page = match (&s.page, chosen) {
+        (Page::Setup, _) => setup::page(s, &l),
+        (_, Some(project)) => pages::project(s, snap, &servers, project, &l),
+        _ => pages::running(s, snap, &servers, across, &l),
     };
 
+    // The first time, setup is the whole window: there is no list to choose from yet
+    let alone = s.first && s.page == Page::Setup;
     let mut sheet = col()
         .key("sheet")
         .grow(1.0)
@@ -252,13 +313,18 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .mt(8.0)
         .mr(8.0)
         .mb(8.0)
-        .radius(14.0)
+        .ml(if alone { 8.0 } else { 0.0 })
+        .radius(16.0)
         .continuous_corners()
-        .fill(l.sheet)
-        .border(l.hair, l.line)
-        .shadow(0.0, 2.0, l.glow);
+        .clip_rounded(16.0)
+        .gradient(l.sheet.0, l.sheet.1)
+        .border_gradient(1.0, l.rim.0.alpha(0.1), l.rim.1);
     if let Some(why) = &s.error {
         sheet = sheet.child(refusal(why, &l));
+    }
+    let sheet = sheet.child(page);
+    if alone {
+        return window.child(sheet);
     }
     // Room for the window's own buttons where they sit over the list; full screen has none
     let top = if cx.chrome_insets().leading > 0.0 {
@@ -266,7 +332,5 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     } else {
         14.0
     };
-    window
-        .child(list(s, snap, &servers, top, &l))
-        .child(sheet.child(page))
+    window.child(list(s, snap, &servers, top, &l)).child(sheet)
 }

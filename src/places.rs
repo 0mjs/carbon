@@ -10,8 +10,8 @@
 //!   ~/dev/work/thing        the same, one level down: "work" has no project markers, so it is a group of projects
 //!
 //! `~/.config/carbon/config.json` can override what was worked out: `roots` to say exactly where to look, `roles`
-//! to put a folder on a particular port, `browser` to choose what opens links, and `window` for how the desktop
-//! app's window opens.
+//! to put a folder on a particular port, `hidden` to leave projects out, `browser` to choose what opens links, and
+//! `window` for how the desktop app's window opens. The app's setup page writes `roots` and `hidden`.
 
 use std::{
     collections::HashMap,
@@ -67,6 +67,8 @@ struct RawConfig {
     roles: HashMap<String, String>,
     browser: Option<String>,
     window: Option<String>,
+    #[serde(default)]
+    hidden: Vec<String>,
 }
 
 #[derive(Default)]
@@ -79,6 +81,38 @@ pub struct Config {
     pub browser: Option<String>,
     /// How the desktop app's window opens: "fullscreen" or "maximized". Without it, at its own size
     pub window: Option<String>,
+    /// Projects that were found but aren't wanted in the list
+    pub hidden: Vec<PathBuf>,
+}
+
+/// A path the way it is written in the config: "~/dev" for a folder in the home folder
+pub fn tidy(home: &Path, path: &Path) -> String {
+    match path.strip_prefix(home) {
+        Ok(inside) if inside.as_os_str().is_empty() => "~".into(),
+        Ok(inside) => format!("~/{}", inside.display()),
+        Err(_) => path.display().to_string(),
+    }
+}
+
+/// Keeps where to look and what to leave out, as chosen in the app. Everything else in the file is left as it is.
+pub fn save(home: &Path, roots: &[PathBuf], hidden: &[PathBuf]) -> Result<(), String> {
+    let path = home.join(".config/carbon/config.json");
+    let mut all: serde_json::Map<String, Value> = fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default();
+    let written =
+        |paths: &[PathBuf]| Value::from(paths.iter().map(|p| tidy(home, p)).collect::<Vec<_>>());
+    all.insert("roots".into(), written(roots));
+    if hidden.is_empty() {
+        all.remove("hidden");
+    } else {
+        all.insert("hidden".into(), written(hidden));
+    }
+    let folder = path.parent().expect("the file is inside a folder");
+    fs::create_dir_all(folder).map_err(|e| format!("Couldn't make {}: {e}", folder.display()))?;
+    let text = serde_json::to_string_pretty(&all).map_err(|e| e.to_string())?;
+    fs::write(&path, text + "\n").map_err(|e| format!("Couldn't write {}: {e}", path.display()))
 }
 
 fn expand(home: &Path, path: &str) -> PathBuf {
@@ -106,6 +140,7 @@ pub fn config(home: &Path) -> Config {
             .collect(),
         browser: raw.browser,
         window: raw.window,
+        hidden: raw.hidden.iter().map(|h| expand(home, h)).collect(),
     }
 }
 
@@ -348,6 +383,15 @@ mod tests {
             Some("pro")
         );
         assert_eq!(config.browser.as_deref(), Some("Safari"));
+
+        // What setup chooses is written beside what was there, which stays
+        save(&home, &[home.join("x")], &[home.join("x/old")]).unwrap();
+        let config = super::config(&home);
+        assert_eq!(config.roots, Some(vec![home.join("x")]));
+        assert_eq!(config.hidden, vec![home.join("x/old")]);
+        assert_eq!(config.browser.as_deref(), Some("Safari"));
+        save(&home, &[home.join("x")], &[]).unwrap();
+        assert!(super::config(&home).hidden.is_empty());
         let _ = fs::remove_dir_all(&home);
     }
 }

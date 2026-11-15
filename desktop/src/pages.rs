@@ -1,16 +1,19 @@
-//! The two things the sheet shows: everything that is running, and one project.
+//! The two things the sheet shows most: everything that is running, and one project.
 
 use carbon::{
     engine::{Agent, App, Project, Snapshot},
     identity::IMAGES,
 };
-use rune::{Cursor, El, FileDialogOptions, Key, ScrollSpec, Tx, col, el, row, text, text_input};
+use rune::{
+    Cursor, El, FileDialogOptions, Key, ScrollSpec, SurfaceFit, Tx, col, color::oklch, el, row,
+    text, text_input,
+};
 
 use crate::{
     Page, State, hub,
     look::{
-        Kind, Look, agent_mark, button, chip, dot, letter, mark, mono, plain_button, sans,
-        tech_chip, tech_mark, tile,
+        Kind, Look, agent_mark, button, chip, dot, hue, letter, mark, mono, plain_button, raised,
+        sans, tech_chip, tech_mark, tile,
     },
     model::{self, Origin, Server},
 };
@@ -28,30 +31,15 @@ fn stop(s: &mut State, port: u16, pid: Option<i32>, slot: bool) {
     }
 }
 
-/// The top of a page: what it is, in a band that also moves the window
-fn heading(title: &str, note: String, l: &Look) -> El {
-    col()
-        .key("heading")
-        .px(32.0)
-        .pt(30.0)
-        .pb(22.0)
-        .gap(4.0)
-        .window_drag()
-        .child(text(title).font(sans(24.0, 600.0)).color(l.text))
-        .child(text(note).font(sans(13.0, 400.0)).color(l.soft))
-}
-
 /// The page under its heading, scrolling when it is taller than the window
-fn body(key: &str) -> El {
-    col().key(key).px(32.0).pb(32.0)
-}
-
 fn scrolling(body: El) -> El {
-    body.scroll(ScrollSpec {
-        stick_bottom: false,
-    })
-    .grow(1.0)
-    .min_h(0.0)
+    body.px(32.0)
+        .pb(32.0)
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .grow(1.0)
+        .min_h(0.0)
 }
 
 /// A picture of what a port is serving, which opens it when pressed. Until one has been taken, the place it goes.
@@ -112,7 +100,7 @@ fn who(s: &State, server: &Server, l: &Look) -> El {
                 .child(
                     text(title.clone())
                         .font(sans(12.5, 500.0))
-                        .color(l.text)
+                        .color(l.ink)
                         .truncate(),
                 )
                 .child(
@@ -122,16 +110,9 @@ fn who(s: &State, server: &Server, l: &Look) -> El {
                         .truncate(),
                 );
         }
-        None => {
-            lines = lines.child(
-                text(detail)
-                    .font(sans(12.5, 500.0))
-                    .color(l.text)
-                    .truncate(),
-            )
-        }
+        None => lines = lines.child(text(detail).font(sans(12.5, 500.0)).color(l.ink).truncate()),
     }
-    block.child(agent_mark(s, agent, 28.0)).child(lines)
+    block.child(agent_mark(s, agent, 28.0, l)).child(lines)
 }
 
 /* ---------- Running: every server on the machine ---------- */
@@ -140,12 +121,24 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
     let port = server.port;
     let (pid, slot) = (server.pid, server.slot);
     let project = server.app.and_then(|app| model::project_of(snap, app));
-    let title = project.map_or_else(|| server.what.clone(), |project| project.title.clone());
-    let address = match server.app.and_then(|app| app.part.as_deref()) {
-        Some(part) => format!("{} on localhost:{port}", model::named(part)),
-        None => format!("localhost:{port}"),
+    // Something Carbon doesn't know as a project goes by the folder it runs in, with the whole path beside its port
+    let title = project.map_or_else(
+        || {
+            server
+                .what
+                .trim_end_matches('/')
+                .rsplit('/')
+                .next()
+                .unwrap_or(&server.what)
+                .to_string()
+        },
+        |project| project.title.clone(),
+    );
+    let address = match (project, server.app.and_then(|app| app.part.as_deref())) {
+        (_, Some(part)) => format!("{} on localhost:{port}", model::named(part)),
+        (Some(_), None) => format!("localhost:{port}"),
+        (None, None) => format!("localhost:{port}, {}", server.what),
     };
-
     let face = match project {
         Some(project) => tile(s, project, 34.0, l),
         None => letter(&title, &title, 34.0, 8.0),
@@ -155,7 +148,7 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
             .grow(1.0)
             .min_w(0.0)
             .gap(1.0)
-            .child(text(title).font(sans(14.0, 600.0)).color(l.text).truncate())
+            .child(text(title).font(sans(14.0, 600.0)).color(l.ink).truncate())
             .child(
                 text(address)
                     .font(sans(12.5, 400.0))
@@ -172,19 +165,12 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
             .on_press(move |s: &mut State| s.go(page.clone()));
     }
 
-    col()
-        .key(format!("server-{port}"))
-        .radius(14.0)
-        .continuous_corners()
-        .fill(l.card)
-        .border(l.hair, l.line)
-        .shadow(1.0, 2.0, l.shadow)
-        .shadow(10.0, 28.0, l.glow)
+    raised(col().key(format!("server-{port}")), l.card, 16.0, l)
         .child(
             picture(s, server, l)
                 .w_full()
                 .aspect_ratio(1.6)
-                .corners([13.0, 13.0, 0.0, 0.0]),
+                .corners([15.0, 15.0, 0.0, 0.0]),
         )
         .child(
             col()
@@ -233,12 +219,12 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
             .window_drag()
             .center()
             .gap(6.0)
-            .child(mark(s, "carbon", 44.0))
-            .child(el().h(8.0))
+            .child(mark(s, "carbon", 52.0, l))
+            .child(el().h(10.0))
             .child(
                 text("Nothing is running")
-                    .font(sans(17.0, 600.0))
-                    .color(l.text),
+                    .font(sans(18.0, 600.0))
+                    .color(l.ink),
             )
             .child(
                 text("Choose a project on the left and press Run.")
@@ -254,12 +240,21 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
     for server in up {
         cards = cards.child(server_card(s, snap, server, l));
     }
+    let heading = col()
+        .key("heading")
+        .px(32.0)
+        .pt(30.0)
+        .pb(22.0)
+        .gap(4.0)
+        .window_drag()
+        .child(text("Running").font(sans(26.0, 600.0)).color(l.ink))
+        .child(text(note).font(sans(13.0, 400.0)).color(l.soft));
     col()
         .key("running")
         .grow(1.0)
         .min_h(0.0)
-        .child(heading("Running", note, l))
-        .child(scrolling(body("running-body").child(cards)))
+        .child(heading)
+        .child(scrolling(col().key("running-body").child(cards)))
 }
 
 /* ---------- One project ---------- */
@@ -341,8 +336,9 @@ fn output(s: &State, l: &Look) -> El {
     col()
         .key("output")
         .h(232.0)
-        .radius(10.0)
+        .radius(11.0)
         .fill(l.well)
+        .border(1.0, l.line)
         .child(
             lines
                 .scroll(ScrollSpec { stick_bottom: true })
@@ -381,7 +377,7 @@ fn app_card(
                     .map_or_else(|| project.title.clone(), model::named),
             )
             .font(sans(15.0, 600.0))
-            .color(l.text)
+            .color(l.ink)
             .truncate(),
         );
     // What it is built with: the main thing by name, the rest as marks. Failing that, the kind of command it runs
@@ -390,7 +386,7 @@ fn app_card(
             .iter()
             .take(5)
             .fold(title.child(tech_chip(s, main, l)), |title, tech| {
-                title.child(tech_mark(s, tech, 20.0))
+                title.child(tech_mark(s, tech, 20.0, l))
             }),
         None => title.child(chip(app.kind, l)),
     };
@@ -503,22 +499,14 @@ fn app_card(
             picture(s, server, l)
                 .w(176.0)
                 .aspect_ratio(1.6)
-                .radius(9.0)
-                .border(l.hair, l.line),
+                .radius(10.0)
+                .border(1.0, l.line),
         );
     }
-    top = top.child(about);
-    let mut card = col()
-        .key(format!("app-{}", app.id))
+    let mut card = raised(col().key(format!("app-{}", app.id)), l.card, 16.0, l)
         .padding(18.0)
         .gap(14.0)
-        .radius(14.0)
-        .continuous_corners()
-        .fill(l.card)
-        .border(l.hair, l.line)
-        .shadow(1.0, 2.0, l.shadow)
-        .shadow(10.0, 28.0, l.glow)
-        .child(top);
+        .child(top.child(about));
 
     // The same app serving somewhere else as well: an agent's copy beside Carbon's, say
     for server in mine.iter().skip(1) {
@@ -566,20 +554,20 @@ fn app_card(
 fn changing(s: &State, project: &Project, l: &Look) -> El {
     let field = row()
         .key("rename-field")
-        .h(40.0)
+        .h(42.0)
         .px(12.0)
         .center_y()
-        .radius(10.0)
+        .radius(11.0)
         .fill(l.well)
-        .border(1.5, l.accent)
+        .border(1.0, l.ink.alpha(0.5))
         .child(
             text_input(&s.rename, sans(20.0, 600.0))
                 .key("rename")
                 .single_line()
                 .grow(1.0)
-                .color(l.text)
+                .color(l.ink)
                 .placeholder(project.name.clone(), l.faint)
-                .caret(l.accent, l.accent.alpha(0.3))
+                .caret(l.ink, l.ink.alpha(0.25))
                 .on_edit(|s: &mut State| &mut s.rename)
                 .on_submit(|s: &mut State, _: &mut Tx| s.finish())
                 // Escape leaves the name as it was
@@ -633,6 +621,24 @@ fn changing(s: &State, project: &Project, l: &Look) -> El {
     )
 }
 
+/// Light behind a project's name, in the project's own colours: its logo, far out of focus
+fn glow(s: &State, project: &Project) -> El {
+    // The renderer blurs by a limited amount, so a small blurred copy is drawn large
+    let small = el().size(48.0, 48.0);
+    let light = match s.logos.get(&project.key) {
+        Some((_, logo)) => small.pixels_fit(logo.pixels(), SurfaceFit::Fill),
+        None => small
+            .radius(24.0)
+            .fill(oklch(0.62, 0.16, hue(&project.key))),
+    };
+    el().key("glow")
+        .size(48.0, 48.0)
+        .absolute(40.0, 38.0)
+        .scale(7.0)
+        .opacity(0.32)
+        .child(light.blur(9.0))
+}
+
 pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project, l: &Look) -> El {
     let mut apps: Vec<&App> = project
         .apps
@@ -655,8 +661,8 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
     } else {
         let mut words = col().gap(5.0).child(
             text(project.title.clone())
-                .font(sans(24.0, 600.0))
-                .color(l.text)
+                .font(sans(26.0, 600.0))
+                .color(l.ink)
                 .truncate(),
         );
         if let Some(says) = &project.description {
@@ -705,6 +711,15 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
                 },
             ));
         }
+        let (key, pinned) = (project.key.clone(), project.pinned);
+        actions = actions.child(button(
+            "pin",
+            if pinned { "Unpin" } else { "Pin" },
+            Kind::Quiet,
+            true,
+            l,
+            move |s: &mut State| s.pin(key.clone(), !pinned),
+        ));
         let title = project.title.clone();
         actions = actions.child(button(
             "edit",
@@ -723,11 +738,12 @@ pub fn project(s: &State, snap: &Snapshot, servers: &[Server], project: &Project
         .pb(24.0)
         .gap(18.0)
         .window_drag()
-        .child(tile(s, project, 64.0, l))
+        .child(glow(s, project))
+        .child(tile(s, project, 64.0, l).shadow(8.0, 24.0, l.shadow))
         .child(words.grow(1.0).min_w(0.0))
         .child(actions);
 
-    let mut list = body("project-body").gap(14.0);
+    let mut list = col().key("project-body").gap(14.0);
     for app in apps {
         list = list.child(app_card(s, snap, servers, project, app, l));
     }

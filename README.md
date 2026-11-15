@@ -14,7 +14,7 @@ is always on **http://localhost:3000**, and decides what runs on the ports next 
 Running an app puts it on its port and stops whatever was there, so the same kind of thing is always at the same
 address.
 
-Carbon is early: this is 0.0.1. It is built and used on macOS; the engine and the app are written to be portable,
+Carbon is early: this is 0.0.2. It is built and used on macOS; the engine and the app are written to be portable,
 but Linux and Windows are untried.
 
 ## Three ways in
@@ -31,9 +31,10 @@ mise run start      # or just run the hub in this terminal
 
 - **The app** is the hub: it runs the engine inside itself and draws its window natively with
   [Rune](https://github.com/anomalyco/rune), with no web view, so the same app can be built for macOS, Windows and
-  Linux. There are two things to look at, chosen from the list on the left: **Running**, every server on the
-  machine with a picture of its page, and **a project**, with each of its apps to run, open and stop. Search the
-  list with ⌘K. Closing the window leaves Carbon and every server running (click the Dock icon to bring it back);
+  Linux. The first time it opens it asks where your projects are. After that there are two things to look at,
+  chosen from the list on the left: **Running**, every server on the machine with a picture of its page, and
+  **a project**, with each of its apps to run, open and stop. Search the list with ⌘K, and pin the projects you
+  use most to the top of it. Closing the window leaves Carbon and every server running (click the Dock icon to bring it back);
   quitting stops Carbon and the servers it started.
 - **The command** talks to whichever hub is running (the app, or `carbon serve`):
 
@@ -78,18 +79,24 @@ code lives (`~/dev`, `~/Projects`, `~/code`…); Documents, Desktop, Downloads, 
 alone. Inside such a place the layout is read, not assumed: a folder with a `.git`, a `package.json` or similar is a
 project, the folders inside it are its parts, and a folder with neither is a group of projects.
 
-`~/.config/carbon/config.json` overrides what was worked out. All of it is optional:
+The app's first screen shows what was found, every folder and project ticked. Untick what you don't want, or add
+a folder Carbon didn't think to look in (your projects needn't be tidy: any folder inside your home folder will
+do). "Choose projects" at the bottom of the list brings the screen back.
+
+What you choose there is kept in `~/.config/carbon/config.json`, which you can also write by hand. All of it is
+optional:
 
 ```json
 {
   "roots": ["~/work", "~/Documents/code"],
+  "hidden": ["~/work/old-site"],
   "roles": { "~/work/shop/coach": "pro" },
   "browser": "Helium",
   "window": "fullscreen"
 }
 ```
 
-`roots` says exactly where to look, `roles` puts a folder on a particular port (`website`, `admin`, `pro` or
+`roots` says exactly where to look, `hidden` leaves projects out, `roles` puts a folder on a particular port (`website`, `admin`, `pro` or
 `other`), `browser` chooses what links open in (the system's default without it), and `window` opens the app's
 window `fullscreen` or `maximized` (at its own size without it).
 
@@ -99,7 +106,8 @@ A project is called what it already calls itself: the name in its web manifest, 
 project, else its folder's name. Its logo is the best icon it ships (`apple-touch-icon.png`, `icon.svg`,
 `favicon.svg`… in `public/`, `app/`, `assets/` and the like), else its first letter on a colour of its own.
 In the app, **Edit** on a project changes either: type a name, choose an image, or drop one on the page. What
-you chose is kept in `~/.config/carbon/projects.json`, with logos copied to `~/.config/carbon/logos/`.
+you chose is kept in `~/.config/carbon/projects.json`, with logos copied to `~/.config/carbon/logos/`. Pins are
+kept there too.
 
 Beside each app are the marks of what it is built with: the tool its dev command runs, its runtime, and the
 well-known packages it depends on (React, Tailwind, TypeScript and so on), read from its own manifest. The list is

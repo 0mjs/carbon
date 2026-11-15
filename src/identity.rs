@@ -60,6 +60,9 @@ pub struct Chosen {
     /// A file name inside the logos folder
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub logo: Option<String>,
+    /// Kept at the top of the list
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 /// What a project says about itself
@@ -100,7 +103,7 @@ fn change(home: &Path, key: &str, edit: impl FnOnce(&mut Chosen)) -> Result<(), 
     let mut all = chosen(home);
     let mut one = all.remove(key).unwrap_or_default();
     edit(&mut one);
-    if one.name.is_some() || one.logo.is_some() {
+    if one.name.is_some() || one.logo.is_some() || one.pinned {
         all.insert(key.to_string(), one);
     }
     keep(home, &all)
@@ -115,6 +118,11 @@ pub fn rename(home: &Path, key: &str, name: &str) -> Result<(), String> {
     change(home, key, |one| {
         one.name = (!name.is_empty()).then(|| name.to_string())
     })
+}
+
+/// Keeps a project at the top of the list, or lets it go back to its place
+pub fn pin(home: &Path, key: &str, pinned: bool) -> Result<(), String> {
+    change(home, key, |one| one.pinned = pinned)
 }
 
 /// Gives a project a logo from an image file, or with none goes back to the one it has by itself
@@ -258,6 +266,10 @@ mod tests {
         set_logo(&home, "dev/thing", None).unwrap();
         assert!(!logo.exists(), "the copy goes when the logo does");
         rename(&home, "dev/thing", "").unwrap();
+        assert!(chosen(&home).is_empty());
+        pin(&home, "dev/thing", true).unwrap();
+        assert!(chosen(&home)["dev/thing"].pinned);
+        pin(&home, "dev/thing", false).unwrap();
         assert!(chosen(&home).is_empty());
         let _ = fs::remove_dir_all(&home);
     }

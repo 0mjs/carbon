@@ -14,6 +14,7 @@
 mod look;
 mod model;
 mod pages;
+mod setup;
 mod view;
 
 use std::{
@@ -25,7 +26,7 @@ use std::{
 
 use carbon::{
     client,
-    engine::{Hub, Snapshot},
+    engine::{Hub, Place, Snapshot},
     places, server,
 };
 use rune::{AppSpec, Image, ImageCache, Key, KeyEvent, Latest, TextEdit, Titlebar, Tx, Waker};
@@ -111,7 +112,20 @@ pub enum Page {
     Running,
     /// One project, by its key
     Project(String),
+    /// Where the projects are, and which of them to show
+    Setup,
 }
+
+/// The interface's own icons, by name
+const ICONS: [(&str, &[u8]); 4] = [
+    ("check", include_bytes!("../assets/icons/check.svg")),
+    (
+        "folder-search",
+        include_bytes!("../assets/icons/folder-search.svg"),
+    ),
+    ("pin", include_bytes!("../assets/icons/pin.svg")),
+    ("search", include_bytes!("../assets/icons/search.svg")),
+];
 
 #[derive(Default)]
 pub struct State {
@@ -145,6 +159,17 @@ pub struct State {
     pub marks: HashMap<&'static str, Image>,
     /// The mark of each tool an app can be built with, by id
     pub techs: HashMap<&'static str, Image>,
+    /// The interface's own icons, by name
+    pub icons: HashMap<&'static str, Image>,
+    /// Setup: the places code could live and their projects, each ticked or not, as they stand before being
+    /// kept. Empty until the engine has looked.
+    pub places: Option<Vec<Place>>,
+    looked: Latest<Vec<Place>>,
+    added: Latest<Result<Place, String>>,
+    /// The logos of the projects setup lists, by key: some of them aren't in the list to have one there
+    pub offered: HashMap<String, Image>,
+    /// Nothing has been chosen yet: this is the first time Carbon has been opened
+    pub first: bool,
     /// Set when the snapshot or the pictures changed and the images above need bringing up to date
     stale: bool,
     /// A picture of the window taken without opening one waits for its images, where a real window shows them
@@ -161,6 +186,63 @@ impl State {
             self.editing = false;
             self.output = None;
             self.lines.clear();
+        }
+    }
+
+    /// Keeps the project on show at the top of the list, or lets it go back to its place
+    pub fn pin(&mut self, key: String, pinned: bool) {
+        self.act("identity".into(), move || hub().pin_project(&key, pinned));
+    }
+
+    /// Opens setup, and has the engine look for where code lives
+    pub fn open_setup(&mut self) {
+        self.go(Page::Setup);
+        self.places = None;
+        self.looked.request((), |()| hub().setup());
+    }
+
+    /// Has the engine look in one more folder, to add to the places setup lists
+    pub fn add_place(&mut self, folder: PathBuf) {
+        self.error = None;
+        self.added.request(folder, |folder| hub().look_in(&folder));
+    }
+
+    /// Keeps what setup shows: the ticked places are where Carbon looks, and the unticked projects in them are
+    /// left out
+    pub fn finish_setup(&mut self) {
+        let Some(places) = &self.places else { return };
+        let roots: Vec<PathBuf> = places
+            .iter()
+            .filter(|place| place.on)
+            .map(|place| place.dir.clone())
+            .collect();
+        let hidden: Vec<PathBuf> = places
+            .iter()
+            .filter(|place| place.on)
+            .flat_map(|place| &place.projects)
+            .filter(|project| !project.on)
+            .map(|project| project.dir.clone())
+            .collect();
+        self.first = false;
+        self.go(Page::Running);
+        self.act("setup".into(), move || hub().save_setup(&roots, &hidden));
+    }
+
+    /// The logos of the projects setup lists
+    fn offer(&mut self) {
+        let (Some(images), Some(places)) = (&self.images, &self.places) else {
+            return;
+        };
+        for project in places.iter().flat_map(|place| &place.projects) {
+            if let (Some(logo), false) = (&project.logo, self.offered.contains_key(&project.key)) {
+                self.offered
+                    .insert(project.key.clone(), images.file(logo, 28.0, 2.0));
+            }
+        }
+        if self.still {
+            for image in self.offered.values() {
+                let _ = image.wait();
+            }
         }
     }
 
@@ -309,7 +391,7 @@ fn setup(s: &mut State, waker: Waker) {
     s.done.set_waker(waker.clone());
     s.tail.set_waker(waker.clone());
     s.pictures.set_waker(waker.clone());
-    let images = ImageCache::new(waker);
+    let images = ImageCache::new(waker.clone());
     s.marks.insert(
         "carbon",
         images.load(include_bytes!("../assets/carbon.svg").to_vec()),
@@ -320,7 +402,18 @@ fn setup(s: &mut State, waker: Waker) {
     for (tech, svg) in TECHS {
         s.techs.insert(tech, images.load(svg.to_vec()));
     }
+    for (icon, svg) in ICONS {
+        s.icons.insert(icon, images.load(svg.to_vec()));
+    }
     s.images = Some(images);
+    s.looked.set_waker(waker.clone());
+    s.added.set_waker(waker);
+    // The first time Carbon is opened it asks where the projects are. A still picture shows what it was asked to
+    if !s.still && !hub().is_set_up() {
+        s.first = true;
+        s.open_setup();
+    }
+    s.offer();
 }
 
 /// Runs before every frame: takes in whatever the workers have finished, and asks the engine again when it is
@@ -347,6 +440,27 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
     }
     if s.stale {
         s.images();
+        changed = true;
+    }
+
+    if let Some(places) = s.looked.take() {
+        s.places = Some(places);
+        s.offer();
+        changed = true;
+    }
+    if let Some(added) = s.added.take() {
+        match (added, &mut s.places) {
+            // A folder already listed is ticked rather than listed twice
+            (Ok(place), Some(places)) => {
+                match places.iter_mut().find(|known| known.dir == place.dir) {
+                    Some(known) => known.on = true,
+                    None => places.push(Place { on: true, ..place }),
+                }
+            }
+            (Err(why), _) => s.error = Some(why),
+            (Ok(_), None) => {}
+        }
+        s.offer();
         changed = true;
     }
 
@@ -449,6 +563,19 @@ fn editing(s: &mut State) {
     }
 }
 
+/// Setup, as it is opened from the list
+fn choosing(s: &mut State) {
+    now(s);
+    s.places = Some(hub().setup());
+    s.page = Page::Setup;
+}
+
+/// Setup, as it is the first time Carbon is opened
+fn first(s: &mut State) {
+    choosing(s);
+    s.first = true;
+}
+
 fn main() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -470,7 +597,13 @@ fn main() {
     let _ = RUNTIME.set(runtime);
 
     let spec = AppSpec::<State> {
-        scenes: &[("now", now), ("project", project), ("editing", editing)],
+        scenes: &[
+            ("now", now),
+            ("project", project),
+            ("editing", editing),
+            ("setup", choosing),
+            ("first", first),
+        ],
         min_size: Some((860.0, 560.0)),
         setup: Some(setup),
         poll: Some(poll),

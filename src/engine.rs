@@ -95,6 +95,28 @@ pub struct Git {
     pub changes: u32,
 }
 
+/// One place code lives, as setup shows it
+pub struct Place {
+    /// "~/dev"
+    pub name: String,
+    pub dir: PathBuf,
+    /// Whether Carbon looks here
+    pub on: bool,
+    pub projects: Vec<Choice>,
+}
+
+/// One project in a place, as setup shows it
+pub struct Choice {
+    pub key: String,
+    pub title: String,
+    pub logo: Option<PathBuf>,
+    /// "~/dev/work/thing"
+    pub place: String,
+    pub dir: PathBuf,
+    /// Whether it is shown in the list
+    pub on: bool,
+}
+
 /// A project: one or more apps that belong together
 #[derive(Serialize)]
 pub struct Project {
@@ -109,6 +131,8 @@ pub struct Project {
     /// Whether the title and the logo were given by hand
     pub renamed: bool,
     pub logo_chosen: bool,
+    /// Kept at the top of the list
+    pub pinned: bool,
     /// The folder it is in, relative to home
     pub group: String,
     /// What it says it is, from its manifest or README
@@ -414,6 +438,9 @@ async fn capture(port: u16) -> Option<Vec<u8>> {
         "--no-first-run",
         "--no-default-browser-check",
         "--mute-audio",
+        // A picture needs no saved passwords: never ask the system's keychain for anything
+        "--use-mock-keychain",
+        "--password-store=basic",
     ])
     .args([
         "--window-size=1280,800",
@@ -580,6 +607,92 @@ impl Hub {
         }
     }
 
+    /// Keeps a project at the top of the list, or lets it go back to its place
+    pub fn pin_project(&self, key: &str, pinned: bool) -> Result<(), String> {
+        identity::pin(&self.home, key, pinned)
+    }
+
+    /// One place to look, for setup: the projects in it that Carbon could run, each with whether it is shown
+    pub fn look_in(&self, folder: &Path) -> Result<Place, String> {
+        if !folder.is_dir() {
+            return Err(format!("{} isn't a folder", folder.display()));
+        }
+        if !folder.starts_with(&self.home) || folder == self.home {
+            return Err("Carbon looks in folders inside your home folder".into());
+        }
+        let config = places::config(&self.home);
+        let chosen = identity::chosen(&self.home);
+        let (spots, _) = places::survey(&self.home, &[folder.to_path_buf()]);
+        let mut projects: Vec<Choice> = Vec::new();
+        for spot in spots {
+            let known = projects.iter().any(|p| p.dir == spot.project_dir);
+            if known || spot.dir.starts_with(&self.me) || detect::detect(&spot.dir).is_none() {
+                continue;
+            }
+            let key = if spot.group.is_empty() {
+                spot.project.clone()
+            } else {
+                format!("{}/{}", spot.group, spot.project)
+            };
+            let found = self.found(&spot.project_dir);
+            let given = chosen.get(&key);
+            let logo = given
+                .and_then(|g| g.logo.as_ref())
+                .map(|file| identity::logos(&self.home).join(file))
+                .filter(|path| path.is_file());
+            projects.push(Choice {
+                title: given
+                    .and_then(|g| g.name.clone())
+                    .or(found.name)
+                    .unwrap_or_else(|| spot.project.clone()),
+                logo: logo.or(found.logo),
+                place: places::tidy(&self.home, &spot.project_dir),
+                on: !config.hidden.contains(&spot.project_dir),
+                key,
+                dir: spot.project_dir,
+            });
+        }
+        projects.sort_by_key(|p| p.title.to_lowercase());
+        // A place is looked in unless places were chosen and this isn't one of them
+        let on = config
+            .roots
+            .as_ref()
+            .is_none_or(|roots| roots.iter().any(|root| root == folder));
+        Ok(Place {
+            name: places::tidy(&self.home, folder),
+            dir: folder.to_path_buf(),
+            on,
+            projects,
+        })
+    }
+
+    /// Everything setup offers: each place code could live (the ones Carbon finds by itself, and any chosen
+    /// before), with its projects
+    pub fn setup(&self) -> Vec<Place> {
+        let config = places::config(&self.home);
+        let mut folders = places::roots(&self.home, &places::Config::default());
+        folders.extend(config.roots.into_iter().flatten());
+        folders.sort();
+        folders.dedup();
+        folders
+            .iter()
+            .filter_map(|folder| self.look_in(folder).ok())
+            .collect()
+    }
+
+    /// Whether setup has been through: the places to look were chosen rather than worked out
+    pub fn is_set_up(&self) -> bool {
+        places::config(&self.home).roots.is_some()
+    }
+
+    /// Keeps what setup chose: where to look, and which projects to leave out
+    pub fn save_setup(&self, roots: &[PathBuf], hidden: &[PathBuf]) -> Result<(), String> {
+        places::save(&self.home, roots, hidden)?;
+        *self.roots.lock().unwrap() = None;
+        self.forget();
+        Ok(())
+    }
+
     /// Gives a project a name; an empty one goes back to the name it has by itself
     pub fn rename(&self, key: &str, name: &str) -> Result<(), String> {
         identity::rename(&self.home, key, name)
@@ -641,8 +754,8 @@ impl Hub {
         let (spots, groups) = places::survey(&self.home, &self.roots());
         let mut apps = Vec::new();
         for spot in spots {
-            // Carbon doesn't list itself, or the page it is made of
-            if spot.dir.starts_with(&self.me) {
+            // Carbon doesn't list itself, or the page it is made of, or a project that was left out in setup
+            if spot.dir.starts_with(&self.me) || config.hidden.contains(&spot.project_dir) {
                 continue;
             }
             let Some(plan) = detect::detect(&spot.dir) else {
@@ -1298,6 +1411,7 @@ impl Hub {
                         .map(|file| logos.join(file))
                         .filter(|path| path.is_file());
                     projects.push(Project {
+                        pinned: given.is_some_and(|g| g.pinned),
                         renamed: name.is_some(),
                         logo_chosen: logo.is_some(),
                         title: name.or(found.name).unwrap_or_else(|| app.project.clone()),
