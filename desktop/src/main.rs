@@ -20,7 +20,10 @@ mod view;
 use std::{
     collections::HashMap,
     path::PathBuf,
-    sync::{Arc, OnceLock},
+    sync::{
+        Arc, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Duration,
 };
 
@@ -36,6 +39,9 @@ use rune::{
 /// The engine, and the runtime its async work runs on. Set once at start-up, before the window opens.
 static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+/// Whether this app is the one answering on port 3000, and whether it should be (a picture of the window isn't)
+static SERVING: AtomicBool = AtomicBool::new(false);
+static WANTS_PORT: AtomicBool = AtomicBool::new(false);
 
 pub fn hub() -> &'static Arc<Hub> {
     HUB.get().expect("the hub is set before the window opens")
@@ -491,6 +497,14 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
 
     if clock >= s.next {
         s.next = clock + 1.5;
+        // Another Carbon had port 3000 when this one started: once it has gone, this one answers there
+        if WANTS_PORT.load(Ordering::Relaxed) && !SERVING.load(Ordering::Relaxed) {
+            runtime().spawn(async {
+                if server::take_over(hub().clone()).await {
+                    SERVING.store(true, Ordering::Relaxed);
+                }
+            });
+        }
         s.fresh
             .request((), |()| Arc::new(runtime().block_on(hub().snapshot())));
         if let Some(port) = s.output {
@@ -593,15 +607,20 @@ fn main() {
         .build()
         .expect("a runtime for the engine");
     let hub = Arc::new(Hub::new());
-    // A hub already answering on 3000 (a `carbon serve` in a terminal) keeps the port; this app then only shows
-    // and controls the machine through its own engine
-    let serving = !client::running();
-    if serving {
+    // A hub already answering on 3000 (a `carbon serve` in a terminal) keeps the port; this app then shows and
+    // controls the machine through its own engine, and takes the port over if that hub goes. A picture of the
+    // window taken without opening one is not a hub at all, and leaves the port alone.
+    let picture = std::env::args().any(|arg| {
+        ["--snap", "--tree", "--video", "--out", "--strip", "--html"].contains(&arg.as_str())
+    });
+    if !picture && !client::running() {
         if let Err(why) = runtime.block_on(server::listen(hub.clone())) {
             eprintln!("{why}");
             std::process::exit(1);
         }
+        SERVING.store(true, Ordering::Relaxed);
     }
+    WANTS_PORT.store(!picture, Ordering::Relaxed);
     // How the window opens is the person's choice, from the config
     let opens = places::config(&hub.home).window;
     let _ = HUB.set(hub);

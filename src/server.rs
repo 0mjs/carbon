@@ -212,30 +212,48 @@ fn router(hub: Arc<Hub>) -> Router {
         .with_state(hub)
 }
 
-/// Starts answering on port 3000 and returns once it is. "localhost" can mean either loopback address, and a
-/// browser tries IPv6 first, so Carbon takes 3000 on both: nothing else can sit on one of them and answer in its
-/// place. If something already has the port, the error says what.
-pub async fn listen(hub: Arc<Hub>) -> Result<(), String> {
+/// Port 3000 on both loopback addresses, or nothing if either is taken. "localhost" can mean either address, and
+/// a browser tries IPv6 first, so Carbon takes both: nothing else can sit on one of them and answer in its place.
+async fn bind() -> Option<Vec<TcpListener>> {
     let mut listeners = Vec::new();
     for address in [format!("127.0.0.1:{HUB_PORT}"), format!("[::1]:{HUB_PORT}")] {
-        match TcpListener::bind(&address).await {
-            Ok(listener) => listeners.push(listener),
-            Err(_) => {
-                let holder = Command::new("lsof")
-                    .args(["-nP", &format!("-iTCP:{HUB_PORT}"), "-sTCP:LISTEN"])
-                    .output();
-                let holder = holder
-                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                    .unwrap_or_default();
-                return Err(format!(
-                    "Carbon needs port {HUB_PORT} and something else has it:\n{holder}"
-                ));
-            }
-        }
+        listeners.push(TcpListener::bind(&address).await.ok()?);
     }
+    Some(listeners)
+}
+
+fn serve(hub: &Arc<Hub>, listeners: Vec<TcpListener>) {
     for listener in listeners {
         let app = router(hub.clone());
         tokio::spawn(async move { axum::serve(listener, app).await });
     }
+}
+
+/// Starts answering on port 3000 and returns once it is. If something already has the port, the error says what.
+pub async fn listen(hub: Arc<Hub>) -> Result<(), String> {
+    let Some(listeners) = bind().await else {
+        let holder = Command::new("lsof")
+            .args(["-nP", &format!("-iTCP:{HUB_PORT}"), "-sTCP:LISTEN"])
+            .output();
+        let holder = holder
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+            .unwrap_or_default();
+        return Err(format!(
+            "Carbon needs port {HUB_PORT} and something else has it:\n{holder}"
+        ));
+    };
+    serve(&hub, listeners);
     Ok(())
+}
+
+/// Starts answering on port 3000 if it is free now, and says whether it did. For a Carbon that started while
+/// another one had the port: when that one goes, this one takes its place.
+pub async fn take_over(hub: Arc<Hub>) -> bool {
+    match bind().await {
+        Some(listeners) => {
+            serve(&hub, listeners);
+            true
+        }
+        None => false,
+    }
 }
