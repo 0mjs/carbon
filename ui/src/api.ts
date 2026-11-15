@@ -1,7 +1,5 @@
 /* The page's line to Carbon's engine: the shapes it sends, and one function per thing the page can ask for. */
 
-import type { AgentKind } from './logos'
-
 export type Role = 'website' | 'admin' | 'pro' | 'other'
 
 export type App = {
@@ -15,6 +13,8 @@ export type App = {
   /** vite, next, astro, node, deno, cargo, go, mise or procfile */
   kind: string
   runtime: string | null
+  /** What it is built with, main thing first */
+  stack: { id: string; name: string }[]
   /** The project names its own tool versions for mise */
   pinned: boolean
   /** The port it is on now, or would be given */
@@ -44,7 +44,7 @@ export type Slot = {
   note: string | null
   since: number | null
   /** The agent that started what is on this port, if one did */
-  by: AgentKind | null
+  by: string | null
 }
 
 /** One server an agent started */
@@ -54,13 +54,15 @@ export type Agent = {
   /** The harness's key and name, e.g. "claude-code" and "Claude Code" */
   harness: string
   name: string
-  /** Whose mark to show */
-  vendor: AgentKind
+  /** The app the session is running inside, e.g. an editor or a terminal */
+  host: { name: string; app: string | null } | null
   pid: number
   cwd: string | null
   since: number
   /** What the session is called, when the harness says */
   title: string | null
+  /** The model it last answered with, when the harness says */
+  model: string | null
   /** "busy" while the agent is working, "idle" while it waits */
   status: string | null
   servers: Started[]

@@ -1,7 +1,7 @@
 import { Link, Outlet, useNavigate } from '@tanstack/react-router'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { api, type Agent, type App, type Listener, type Project, type Slot } from './api'
-import { AgentMark } from './logos'
+import { AgentMark, TechMark } from './logos'
 import { useCarbon } from './store'
 
 const appName = (a: Pick<App, 'project' | 'part'>) => (a.part ? `${a.project} / ${a.part}` : a.project)
@@ -91,7 +91,7 @@ function Port({ slot, app, pictures }: { slot: Slot; app?: App; pictures: boolea
       <div className="flex items-center justify-between gap-2">
         <span className="flex items-center gap-1.5 font-mono text-[11px] text-faint">
           {slot.label}
-          {slot.by && <AgentMark kind={slot.by} className="size-3.5" />}
+          {slot.by && <AgentMark harness={slot.by} name={slot.by} className="size-4" />}
         </span>
         <span className="flex items-center gap-2 font-mono text-[11px] text-muted">
           {live && slot.since ? <span className="text-faint tabular-nums">{since(slot.since)}</span> : null}
@@ -164,7 +164,10 @@ function AppRow({ app, slot }: { app: App; slot?: Slot }) {
         <p className="flex items-center gap-2 text-[13px]">
           <span className="led shrink-0" data-status={slot?.status ?? 'idle'} />
           <span className="truncate font-medium">{app.part ?? app.project}</span>
-          <span className="tag shrink-0">{app.kind}</span>
+          {app.stack.length === 0 && <span className="tag shrink-0">{app.kind}</span>}
+          {app.stack.slice(0, 6).map((tech, i) => (
+            <TechMark key={tech.id} id={tech.id} name={tech.name} named={i === 0} />
+          ))}
           {/* Tool versions: named by the project, or one click to name them */}
           {app.pinned ? (
             <span className="tag shrink-0" title="This project names its tool versions for mise">
@@ -278,9 +281,10 @@ function AgentSession({ agent, apps }: { agent: Agent; apps: Map<string, App> })
   return (
     <div className="border-t border-line">
       <div className="flex items-center gap-2.5 px-4 pt-3 pb-1">
-        <AgentMark kind={agent.vendor} />
+        <AgentMark harness={agent.harness} name={agent.name} />
         <h3 className="min-w-0 truncate text-[13px] font-medium">{agent.title ?? agent.name}</h3>
-        <span className="tag shrink-0">{agent.name}</span>
+        <span className="tag shrink-0">{agent.host ? `${agent.name} in ${agent.host.name}` : agent.name}</span>
+        {agent.model && <span className="tag shrink-0">{agent.model}</span>}
         {agent.status && (
           <span className="flex shrink-0 items-center gap-1.5 font-mono text-[11px] text-faint">
             <span className="led" data-status={agent.status === 'busy' ? 'starting' : 'idle'} />

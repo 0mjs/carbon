@@ -1,9 +1,12 @@
 //! How Carbon looks: its colours in light and dark, its type, and the few small pieces every view is made of.
 //! Soft surfaces, round corners, one accent (the system's) for the thing to press and green for what is live.
 
-use carbon::engine::Project;
+use carbon::{
+    engine::{Agent, Project},
+    stack::Tech,
+};
 use rune::{
-    Color, Cursor, Cx, El, SurfaceFit, TextStyle,
+    Color, Cursor, Cx, El, Image, SurfaceFit, TextStyle,
     color::{oklch, oklcha},
     el, row, text,
     tok::Family,
@@ -209,8 +212,8 @@ pub fn letter(title: &str, seed: &str, size: f32, round: f32) -> El {
         )
 }
 
-/// Carbon's mark or an agent's, on a dark tile of its own so a light mark shows in a light window too
-pub fn mark(s: &State, name: &str, size: f32) -> El {
+/// A mark on a dark tile of its own, so a light mark shows in a light window too
+fn on_tile(image: Option<&Image>, size: f32) -> El {
     let inside = (size * 0.62).round();
     let tile = row()
         .size(size, size)
@@ -218,8 +221,58 @@ pub fn mark(s: &State, name: &str, size: f32) -> El {
         .continuous_corners()
         .center()
         .fill(oklch(0.21, 0.005, 265.0));
-    match s.marks.get(name) {
+    match image {
         Some(image) => tile.child(el().size(inside, inside).pixels(image.pixels())),
         None => tile,
+    }
+}
+
+/// Carbon's own mark, or a harness's
+pub fn mark(s: &State, name: &str, size: f32) -> El {
+    on_tile(s.marks.get(name), size)
+}
+
+/// The mark of a tool an app is built with. Resting the pointer on it says what it is.
+pub fn tech_mark(s: &State, tech: &Tech, size: f32) -> El {
+    on_tile(s.techs.get(tech.id), size).help(tech.name)
+}
+
+/// The main thing an app is built with, by mark and name
+pub fn tech_chip(s: &State, tech: &Tech, l: &Look) -> El {
+    row()
+        .h(22.0)
+        .pl(3.0)
+        .pr(8.0)
+        .gap(6.0)
+        .center_y()
+        .radius(7.0)
+        .fill(l.quiet)
+        .child(on_tile(s.techs.get(tech.id), 16.0))
+        .child(text(tech.name).font(sans(11.5, 500.0)).color(l.soft))
+}
+
+/// Who an agent is at a glance: its harness's mark (its first letter where Carbon has no mark for it), with the
+/// icon of the app it is running in tucked into the corner
+pub fn agent_mark(s: &State, agent: &Agent, size: f32) -> El {
+    let face = match s.marks.contains_key(agent.harness) {
+        true => mark(s, agent.harness, size),
+        false => letter(agent.name, agent.harness, size, (size * 0.28).round()),
+    };
+    let badge = (size * 0.56).round();
+    let icon = agent
+        .host
+        .as_ref()
+        .and_then(|host| host.app.as_ref())
+        .and_then(|app| s.apps.get(app));
+    match icon {
+        Some(icon) => el()
+            .size(size + badge * 0.4, size + badge * 0.3)
+            .child(face.absolute(0.0, 0.0))
+            .child(
+                el().size(badge, badge)
+                    .absolute(size - badge * 0.6, size - badge * 0.7)
+                    .pixels(icon.pixels()),
+            ),
+        None => face,
     }
 }

@@ -7,7 +7,7 @@ cargo build --release -p carbon-desktop
 APP=dist/Carbon.app
 VERSION=$(grep -m1 '^version' desktop/Cargo.toml | cut -d'"' -f2)
 rm -rf "$APP" && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/Carbon "$APP/Contents/MacOS/Carbon"
+cp target/release/carbon-desktop "$APP/Contents/MacOS/Carbon"
 cp brand/Carbon.icns "$APP/Contents/Resources/Carbon.icns"
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>

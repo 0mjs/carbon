@@ -16,8 +16,8 @@ carbon: the local hub for your dev servers, always on port 3000
   carbon                  run the hub (the same as `carbon serve`)
   carbon ls               what is on each port, and what else is running
   carbon agents           the servers coding agents have started, by session
-  carbon run <app>        start an app on its port, e.g. `carbon run cutwise/web`
-                          a project's name starts all of it: `carbon run cutwise`
+  carbon run <app>        start an app on its port, e.g. `carbon run shop/web`
+                          a project's name starts all of it: `carbon run shop`
   carbon stop <app|port>  stop what is on a port
   carbon open <app|port>  open it in the browser
   carbon logs <port> [-f] what a server Carbon started has printed; -f keeps following
@@ -133,11 +133,15 @@ fn agents() -> Result<(), String> {
     }
     for agent in agents {
         let title = agent["title"].as_str().unwrap_or(text(&agent["name"]));
-        println!(
-            "{title}  ({}, {})",
-            text(&agent["name"]),
-            agent["cwd"].as_str().unwrap_or("?")
-        );
+        // The harness, the app it is running in and its model, as far as each is known
+        let mut who = text(&agent["name"]).to_string();
+        if let Some(host) = agent["host"]["name"].as_str() {
+            who += &format!(" in {host}");
+        }
+        if let Some(model) = agent["model"].as_str() {
+            who += &format!(", {model}");
+        }
+        println!("{title}  ({who}, {})", agent["cwd"].as_str().unwrap_or("?"));
         for server in agent["servers"].as_array().into_iter().flatten() {
             let ports: Vec<String> = server["ports"]
                 .as_array()

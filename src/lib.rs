@@ -12,3 +12,4 @@ pub mod harness;
 pub mod identity;
 pub mod places;
 pub mod server;
+pub mod stack;

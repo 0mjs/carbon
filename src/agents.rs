@@ -5,8 +5,9 @@
 //! that is the command the agent ran, not the agent's own helpers, and not something that command went on to spawn
 //! (those belong to it, and are stopped with it).
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
+use serde::Serialize;
 use tokio::process::Command;
 
 use crate::harness::{self, Harness};
@@ -15,20 +16,99 @@ pub struct Proc {
     pub parent: i32,
     /// Seconds it has been running
     pub up: u64,
+    /// The program it is running, as a path where the system gives one. Kept apart from the command line because
+    /// a path can have spaces in it ("/Applications/Some App.app/…"), and a command line can't say where they are
+    pub program: String,
     /// Its whole command line
     pub args: String,
 }
 
 impl Proc {
-    /// The program's own name: "zsh" for "/bin/zsh -c …", and for a login shell's "-zsh"
+    /// A process known only by its command line, taking its first word as its program
+    pub fn of(parent: i32, up: u64, args: &str) -> Self {
+        Proc {
+            parent,
+            up,
+            program: args.split_whitespace().next().unwrap_or("").into(),
+            args: args.into(),
+        }
+    }
+
+    /// The program's own name: "zsh" for "/bin/zsh", and for a login shell's "-zsh"
     pub fn name(&self) -> &str {
-        let program = self.args.split_whitespace().next().unwrap_or("");
-        program
+        self.program
             .rsplit('/')
             .next()
             .unwrap_or("")
             .trim_start_matches('-')
     }
+
+    /// What it was given to run: its command line after the program
+    pub fn given(&self) -> &str {
+        match self.args.strip_prefix(&self.program) {
+            Some(rest) => rest,
+            None => self
+                .args
+                .split_once(char::is_whitespace)
+                .map_or("", |(_, rest)| rest),
+        }
+    }
+}
+
+/// The app an agent is running inside: an editor, a terminal, or one of the apps made for running agents
+#[derive(Clone, Serialize)]
+pub struct Host {
+    /// What the app is called, e.g. "Zed"
+    pub name: String,
+    /// Where the app is, when it is one with an icon of its own
+    pub app: Option<PathBuf>,
+}
+
+/// The app a process belongs to, if it runs from inside one (macOS: "/Applications/Zed.app/Contents/…")
+fn bundle(program: &str) -> Option<Host> {
+    let end = program.find(".app/")? + ".app".len();
+    let app = PathBuf::from(&program[..end]);
+    let name = app.file_stem()?.to_str()?.to_string();
+    Some(Host {
+        name,
+        app: Some(app),
+    })
+}
+
+/// A process and everything above it, nearest first
+pub fn lineage(table: &HashMap<i32, Proc>, pid: i32) -> Vec<i32> {
+    let mut line = Vec::new();
+    let mut at = pid;
+    while at > 1 && line.len() < 64 {
+        let Some(proc) = table.get(&at) else { break };
+        line.push(at);
+        at = proc.parent;
+    }
+    line
+}
+
+/// The app a session is running inside: the nearest one above it, or the one its own program is part of.
+/// `paths` are where programs really are, for the ones the process table knows only by a bare name (an app's
+/// background helper started as "tern", say).
+pub fn host(
+    table: &HashMap<i32, Proc>,
+    session: i32,
+    paths: &HashMap<i32, String>,
+) -> Option<Host> {
+    for pid in lineage(table, session) {
+        let proc = table.get(&pid)?;
+        if let Some(host) = bundle(paths.get(&pid).unwrap_or(&proc.program)) {
+            return Some(host);
+        }
+        // T3 Code also runs without its app, as a command that serves it to a browser
+        if proc.name() == "t3" {
+            return Some(Host {
+                name: "T3 Code".into(),
+                app: None,
+            });
+        }
+    }
+    None
 }
 
 pub const SHELLS: [&str; 6] = ["zsh", "bash", "sh", "fish", "dash", "ksh"];
@@ -45,12 +125,29 @@ fn seconds(elapsed: &str) -> u64 {
         })
 }
 
+/// One column of `ps` for every process: its pid, then the rest of the line with its own spaces kept
+async fn column(name: &str) -> Vec<(i32, String)> {
+    let out = Command::new("ps")
+        .args(["-axo", &format!("pid=,{name}=")])
+        .output()
+        .await;
+    let text = String::from_utf8_lossy(&out.map(|o| o.stdout).unwrap_or_default()).into_owned();
+    text.lines()
+        .filter_map(|line| {
+            let (pid, rest) = line.trim_start().split_once(char::is_whitespace)?;
+            Some((pid.parse().ok()?, rest.trim().to_string()))
+        })
+        .collect()
+}
+
 /// Every process on the machine, by pid
 pub async fn processes() -> HashMap<i32, Proc> {
     let out = Command::new("ps")
         .args(["-axo", "pid=,ppid=,etime=,args="])
-        .output()
-        .await;
+        .output();
+    // The program is asked for by itself: it is the one column besides the command line that can hold spaces
+    let (out, programs) = tokio::join!(out, column("comm"));
+    let programs: HashMap<i32, String> = programs.into_iter().collect();
     let text = String::from_utf8_lossy(&out.map(|o| o.stdout).unwrap_or_default()).into_owned();
     let mut table = HashMap::new();
     for line in text.lines() {
@@ -66,26 +163,28 @@ pub async fn processes() -> HashMap<i32, Proc> {
             continue;
         };
         let up = seconds(column());
-        table.insert(
-            pid,
-            Proc {
+        let proc = match programs.get(&pid) {
+            Some(program) => Proc {
                 parent,
                 up,
+                program: program.clone(),
                 args: rest.to_string(),
             },
-        );
+            None => Proc::of(parent, up, rest),
+        };
+        table.insert(pid, proc);
     }
     table
 }
 
 /// The harness a process is, if it is a coding agent
-pub fn agent_of(proc: &Proc) -> Option<&'static dyn Harness> {
+pub fn agent_of(proc: &Proc) -> Option<&'static Harness> {
     harness::of(proc)
 }
 
 pub struct Found {
     /// Each agent session: its pid and which harness it is
-    pub sessions: Vec<(i32, &'static dyn Harness)>,
+    pub sessions: Vec<(i32, &'static Harness)>,
     /// Each thing an agent started: its pid, the session's pid, and its whole process tree (itself first)
     pub started: Vec<(i32, i32, Vec<i32>)>,
 }
@@ -160,11 +259,59 @@ mod tests {
     use super::*;
 
     fn proc(parent: i32, args: &str) -> Proc {
-        Proc {
+        Proc::of(parent, 60, args)
+    }
+
+    #[test]
+    fn finds_the_app_a_session_runs_inside() {
+        let app = |parent, program: &str| Proc {
             parent,
             up: 60,
-            args: args.into(),
-        }
+            program: program.into(),
+            args: program.into(),
+        };
+        let table = HashMap::from([
+            (
+                5,
+                app(
+                    1,
+                    "/Applications/Some Editor.app/Contents/MacOS/Some Editor",
+                ),
+            ),
+            (
+                6,
+                app(
+                    5,
+                    "/Applications/Some Editor.app/Contents/Frameworks/Helper.app/Contents/MacOS/Helper",
+                ),
+            ),
+            (7, proc(6, "-zsh")),
+            (8, proc(7, "claude")),
+            (20, proc(1, "t3 serve")),
+            (21, proc(20, "codex app-server")),
+            (30, proc(1, "claude")),
+        ]);
+        let none = HashMap::new();
+        let inside = host(&table, 8, &none).unwrap();
+        assert_eq!(inside.name, "Some Editor");
+        assert_eq!(
+            inside.app,
+            Some(PathBuf::from("/Applications/Some Editor.app"))
+        );
+        assert_eq!(
+            host(&table, 21, &none).map(|h| h.name).as_deref(),
+            Some("T3 Code")
+        );
+        assert!(host(&table, 30, &none).is_none());
+        // Known only as "claude" in the table, but really inside an app
+        let real = HashMap::from([(
+            30,
+            "/Applications/Desk.app/Contents/Resources/claude".to_string(),
+        )]);
+        assert_eq!(
+            host(&table, 30, &real).map(|h| h.name).as_deref(),
+            Some("Desk")
+        );
     }
 
     #[test]
@@ -193,7 +340,7 @@ mod tests {
             found
                 .sessions
                 .iter()
-                .map(|s| (s.0, s.1.id()))
+                .map(|s| (s.0, s.1.id))
                 .collect::<Vec<_>>(),
             vec![(10, "claude-code")]
         );

@@ -26,7 +26,7 @@ use std::{
 use carbon::{
     client,
     engine::{Hub, Snapshot},
-    server,
+    places, server,
 };
 use rune::{AppSpec, Image, ImageCache, Key, KeyEvent, Latest, TextEdit, Titlebar, Tx, Waker};
 
@@ -43,6 +43,62 @@ pub fn runtime() -> &'static tokio::runtime::Runtime {
         .get()
         .expect("the runtime is set before the window opens")
 }
+
+/// A mark for each harness that has one, by the harness's id
+macro_rules! marks {
+    ($folder:literal: $($id:literal),* $(,)?) => {
+        [$(($id, include_bytes!(concat!("../../marks/", $folder, $id, ".svg")) as &[u8])),*]
+    };
+}
+const MARKS: [(&str, &[u8]); 14] = marks!["":
+    "amp",
+    "claude-code",
+    "cline",
+    "codex",
+    "copilot",
+    "cursor-agent",
+    "gemini-cli",
+    "goose",
+    "grok-cli",
+    "kilo",
+    "oh-my-pi",
+    "opencode",
+    "pi",
+    "qwen-code",
+];
+
+/// A mark for each tool an app can be built with, by the tool's id
+const TECHS: [(&str, &[u8]); 29] = marks!["tech/":
+    "astro",
+    "bun",
+    "cloudflare",
+    "convex",
+    "deno",
+    "django",
+    "drizzle",
+    "expo",
+    "express",
+    "fastapi",
+    "flask",
+    "go",
+    "hono",
+    "next",
+    "node",
+    "nuxt",
+    "prisma",
+    "python",
+    "react",
+    "remix",
+    "rust",
+    "solid",
+    "supabase",
+    "svelte",
+    "tailwind",
+    "tanstack",
+    "typescript",
+    "vite",
+    "vue",
+];
 
 /// The band at the top of the window that moves it, where the window's own buttons sit
 pub const TITLEBAR: f32 = 52.0;
@@ -82,9 +138,13 @@ pub struct State {
     pictures: Latest<Vec<(u16, Arc<Vec<u8>>)>>,
     /// Each project's logo by its key, with the file it was read from so a new file is noticed
     pub logos: HashMap<String, (PathBuf, Image)>,
+    /// The icon of each app an agent is running inside, by where the app is
+    pub apps: HashMap<PathBuf, Image>,
     images: Option<ImageCache>,
-    /// Carbon's own mark and each agent's, by name
+    /// Carbon's own mark and each harness's, by id
     pub marks: HashMap<&'static str, Image>,
+    /// The mark of each tool an app can be built with, by id
+    pub techs: HashMap<&'static str, Image>,
     /// Set when the snapshot or the pictures changed and the images above need bringing up to date
     stale: bool,
     /// A picture of the window taken without opening one waits for its images, where a real window shows them
@@ -217,12 +277,21 @@ impl State {
                 );
             }
         }
+        // The icon of each app an agent is running inside
+        let hosts: Vec<&PathBuf> = snap
+            .agents
+            .iter()
+            .filter_map(|agent| agent.host.as_ref()?.app.as_ref())
+            .collect();
+        self.apps.retain(|app, _| hosts.contains(&app));
+        for app in hosts {
+            if !self.apps.contains_key(app) {
+                self.apps.insert(app.clone(), images.app_icon(app, 20.0));
+            }
+        }
         if self.still {
-            for image in self
-                .shots
-                .values()
-                .chain(self.logos.values().map(|(_, image)| image))
-            {
+            let logos = self.logos.values().map(|(_, image)| image);
+            for image in self.shots.values().chain(logos).chain(self.apps.values()) {
                 let _ = image.wait();
             }
         }
@@ -241,14 +310,15 @@ fn setup(s: &mut State, waker: Waker) {
     s.tail.set_waker(waker.clone());
     s.pictures.set_waker(waker.clone());
     let images = ImageCache::new(waker);
-    for (name, svg) in [
-        ("carbon", &include_bytes!("../assets/carbon.svg")[..]),
-        ("claude", &include_bytes!("../assets/claude.svg")[..]),
-        ("openai", &include_bytes!("../assets/openai.svg")[..]),
-        ("gemini", &include_bytes!("../assets/gemini.svg")[..]),
-        ("grok", &include_bytes!("../assets/grok.svg")[..]),
-    ] {
-        s.marks.insert(name, images.load(svg.to_vec()));
+    s.marks.insert(
+        "carbon",
+        images.load(include_bytes!("../assets/carbon.svg").to_vec()),
+    );
+    for (harness, svg) in MARKS {
+        s.marks.insert(harness, images.load(svg.to_vec()));
+    }
+    for (tech, svg) in TECHS {
+        s.techs.insert(tech, images.load(svg.to_vec()));
     }
     s.images = Some(images);
 }
@@ -326,7 +396,7 @@ fn on_key(s: &mut State, event: &KeyEvent, _: &mut Tx) -> bool {
     }
 }
 
-/* ---------- Scenes: the window as a picture, without opening one (`Carbon --snap out.png --scene now`) ---------- */
+/* ---------- Scenes: the window as a picture, without opening one (`carbon-desktop --snap out.png --scene now`) ---------- */
 
 /// The machine as it is this moment, with a picture of everything serving, read before the first frame
 fn now(s: &mut State) {
@@ -394,6 +464,8 @@ fn main() {
             std::process::exit(1);
         }
     }
+    // How the window opens is the person's choice, from the config
+    let opens = places::config(&hub.home).window;
     let _ = HUB.set(hub);
     let _ = RUNTIME.set(runtime);
 
@@ -408,6 +480,8 @@ fn main() {
     rune::App::new(spec)
         // The window draws its own top edge, so the list runs to the top with the window's buttons over it
         .titlebar(Titlebar::new(TITLEBAR))
+        .full_screen(opens.as_deref() == Some("fullscreen"))
+        .maximized(opens.as_deref() == Some("maximized"))
         // Cut, copy and paste for the text fields
         .standard_menus()
         // Closing the window is not quitting: Carbon and its servers carry on, and the Dock icon reopens it

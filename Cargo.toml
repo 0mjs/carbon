@@ -4,9 +4,11 @@ resolver = "3"
 
 [package]
 name = "carbon"
-version = "0.4.0"
+version = "0.0.1"
 edition = "2024"
-description = "The local hub for everything in ~/dev: always on port 3000, it starts, stops and shows every dev server"
+license = "MIT"
+repository = "https://github.com/0mjs/carbon"
+description = "A local hub for dev servers: always on port 3000, it finds your projects and starts, stops and shows every server"
 
 [lib]
 name = "carbon"

@@ -1,14 +1,17 @@
 //! The two things the sheet shows: everything that is running, and one project.
 
 use carbon::{
-    engine::{App, Project, Snapshot},
+    engine::{Agent, App, Project, Snapshot},
     identity::IMAGES,
 };
 use rune::{Cursor, El, FileDialogOptions, Key, ScrollSpec, Tx, col, el, row, text, text_input};
 
 use crate::{
     Page, State, hub,
-    look::{Kind, Look, button, chip, dot, letter, mark, mono, plain_button, sans, tile},
+    look::{
+        Kind, Look, agent_mark, button, chip, dot, letter, mark, mono, plain_button, sans,
+        tech_chip, tech_mark, tile,
+    },
     model::{self, Origin, Server},
 };
 
@@ -66,19 +69,69 @@ fn picture(s: &State, server: &Server, l: &Look) -> El {
     }
 }
 
+/// An agent and the app it is running in: "Claude Code in Zed"
+fn by(agent: &Agent) -> String {
+    match &agent.host {
+        Some(host) => format!("{} in {}", agent.name, host.name),
+        None => agent.name.to_string(),
+    }
+}
+
 /// Who started a server, in a few words
 fn started(server: &Server) -> String {
     match &server.origin {
-        Origin::Agent(agent) => match &agent.title {
-            Some(title) => format!("{}: {title}", agent.name),
-            None => agent.name.to_string(),
-        },
+        Origin::Agent(agent) => format!("Started by {}", by(agent)),
         Origin::Carbon => match server.since {
             Some(since) if server.live() => format!("Up {}", model::up(since)),
             _ => "Starting".into(),
         },
         Origin::Hand => "Started by hand".into(),
     }
+}
+
+/// Who started a server, as two lines beside the agent's mark: the session's name, then the harness, the app it
+/// is running in and the model. Anything not started by an agent says so in one line.
+fn who(s: &State, server: &Server, l: &Look) -> El {
+    let block = row().gap(10.0).center_y().min_h(36.0);
+    let Origin::Agent(agent) = &server.origin else {
+        return block.child(
+            text(started(server))
+                .font(sans(12.5, 400.0))
+                .color(l.faint)
+                .truncate(),
+        );
+    };
+    let detail = match &agent.model {
+        Some(model) => format!("{}, {model}", by(agent)),
+        None => by(agent),
+    };
+    let mut lines = col().grow(1.0).min_w(0.0).gap(1.0);
+    match &agent.title {
+        Some(title) => {
+            lines = lines
+                .child(
+                    text(title.clone())
+                        .font(sans(12.5, 500.0))
+                        .color(l.text)
+                        .truncate(),
+                )
+                .child(
+                    text(detail)
+                        .font(sans(12.0, 400.0))
+                        .color(l.faint)
+                        .truncate(),
+                );
+        }
+        None => {
+            lines = lines.child(
+                text(detail)
+                    .font(sans(12.5, 500.0))
+                    .color(l.text)
+                    .truncate(),
+            )
+        }
+    }
+    block.child(agent_mark(s, agent, 28.0)).child(lines)
 }
 
 /* ---------- Running: every server on the machine ---------- */
@@ -119,19 +172,6 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
             .on_press(move |s: &mut State| s.go(page.clone()));
     }
 
-    let mut who = row().gap(7.0).center_y().grow(1.0).min_w(0.0);
-    if let Origin::Agent(agent) = &server.origin {
-        who = who.child(mark(s, agent.vendor, 18.0));
-    }
-    who = who.child(
-        text(started(server))
-            .font(sans(12.0, 400.0))
-            .color(l.faint)
-            .truncate()
-            .grow(1.0)
-            .min_w(0.0),
-    );
-
     col()
         .key(format!("server-{port}"))
         .radius(14.0)
@@ -147,28 +187,37 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
                 .corners([13.0, 13.0, 0.0, 0.0]),
         )
         .child(
-            col().padding(14.0).gap(14.0).child(name).child(
-                row()
-                    .gap(8.0)
-                    .center_y()
-                    .child(who)
-                    .child(button(
-                        format!("stop-{port}"),
-                        "Stop",
-                        Kind::Quiet,
-                        s.busy.is_none(),
-                        l,
-                        move |s: &mut State| stop(s, port, pid, slot),
-                    ))
-                    .child(button(
-                        format!("open-{port}"),
-                        "Open",
-                        Kind::Main,
-                        server.live(),
-                        l,
-                        move |_: &mut State| open(port),
-                    )),
-            ),
+            col()
+                .padding(14.0)
+                .gap(12.0)
+                .child(name)
+                .child(who(s, server, l))
+                .child(
+                    row()
+                        .gap(8.0)
+                        .child(
+                            button(
+                                format!("stop-{port}"),
+                                "Stop",
+                                Kind::Quiet,
+                                s.busy.is_none(),
+                                l,
+                                move |s: &mut State| stop(s, port, pid, slot),
+                            )
+                            .grow(1.0),
+                        )
+                        .child(
+                            button(
+                                format!("open-{port}"),
+                                "Open",
+                                Kind::Main,
+                                server.live(),
+                                l,
+                                move |_: &mut State| open(port),
+                            )
+                            .grow(1.0),
+                        ),
+                ),
         )
 }
 
@@ -259,7 +308,12 @@ fn doing(app: &App, mine: &[&Server], servers: &[Server], snap: &Snapshot) -> St
                 says += &format!(", up {}", model::up(since));
             }
             match &server.origin {
-                Origin::Agent(agent) => says += &format!(", started by {}", agent.name),
+                Origin::Agent(agent) => {
+                    says += &format!(", started by {}", by(agent));
+                    if let Some(model) = &agent.model {
+                        says += &format!(" ({model})");
+                    }
+                }
                 Origin::Hand => says += ", started by hand",
                 Origin::Carbon => {}
             }
@@ -314,7 +368,7 @@ fn app_card(
     let idle = s.busy.is_none();
     let id = app.id.clone();
 
-    let title = row()
+    let mut title = row()
         .gap(9.0)
         .center_y()
         .grow(1.0)
@@ -329,8 +383,17 @@ fn app_card(
             .font(sans(15.0, 600.0))
             .color(l.text)
             .truncate(),
-        )
-        .child(chip(app.kind, l));
+        );
+    // What it is built with: the main thing by name, the rest as marks. Failing that, the kind of command it runs
+    title = match app.stack.split_first() {
+        Some((main, rest)) => rest
+            .iter()
+            .take(5)
+            .fold(title.child(tech_chip(s, main, l)), |title, tech| {
+                title.child(tech_mark(s, tech, 20.0))
+            }),
+        None => title.child(chip(app.kind, l)),
+    };
 
     // What can be done with it, on the right, with the thing to press last
     let mut buttons = row().gap(8.0).center_y();

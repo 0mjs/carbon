@@ -14,9 +14,16 @@ is always on **http://localhost:3000**, and decides what runs on the ports next 
 Running an app puts it on its port and stops whatever was there, so the same kind of thing is always at the same
 address.
 
+Carbon is early: this is 0.0.1. It is built and used on macOS; the engine and the app are written to be portable,
+but Linux and Windows are untried.
+
 ## Three ways in
 
+You need [mise](https://mise.jdx.dev) (Carbon starts everything through it, and it supplies Bun for building the
+page) and Rust from [rustup](https://rustup.rs), which picks up the version in `rust-toolchain.toml` by itself.
+
 ```bash
+git clone https://github.com/0mjs/carbon && cd carbon
 mise run app        # build Carbon.app into dist/ and open it
 mise run install    # install the `carbon` command into ~/.cargo/bin
 mise run start      # or just run the hub in this terminal
@@ -44,15 +51,25 @@ mise run start      # or just run the hub in this terminal
 
 ## Servers started by agents
 
-Coding agents start dev servers for you to look at, then leave them running. Carbon finds them: every server a
-coding agent started is listed under the session that started it, with the agent's mark, its port, and a Stop
-button. Only servers are shown: a build or a test run an agent kicked off is not Carbon's business. A port tile
-carries the agent's mark when an agent started what is on it. Servers you started by hand are under "Elsewhere".
+Coding agents start dev servers for you to look at, then leave them running. Carbon finds them: a server an agent
+started says so, with the agent's mark, the name of the session that started it, the app that session is running
+in, and the model it is using. Only servers are shown: a build or a test run an agent kicked off is not Carbon's
+business.
 
-Each agent is a **harness adapter** in `src/harness.rs`: how to recognise its process and, where it keeps records,
-which session a process is and what that session is called. Claude Code's adapter reads its session files, so a
-session shows its name and whether it is working or waiting. Codex, Gemini CLI and Grok CLI are recognised; their
-adapters don't read session records yet. Adding a harness is one adapter and one line in `ALL`.
+Three things are told apart:
+
+- **The harness** is the program that runs commands for you. Carbon recognises Claude Code, Codex, Gemini CLI,
+  Grok CLI, pi, oh-my-pi, OpenCode, Amp, Cursor Agent, Copilot CLI, Droid, Qwen Code, Kilo Code, Cline, Auggie,
+  Crush, Goose and Aider, by the program and package names each publishes. Each is one entry in `src/harness.rs`.
+- **The host** is the app the harness is running inside: an editor, a terminal, or an app made for running agents
+  (T3 Code, Orca, Tern and the like). Nothing is listed for this: Carbon walks up from the session to the nearest
+  app and shows that app's own name and icon, so an app needs no support added. It is macOS only for now, and has
+  been tried with Tern.
+- **The session and its model** come from the harness's own records, where Carbon can read them. Today that is
+  Claude Code only: its sessions show their name, whether they are working or waiting, and the model behind the
+  latest answer. The other harnesses are recognised without those details.
+
+A harness with a mark in `marks/` shows it; one without shows its first letter.
 
 ## Where it looks
 
@@ -67,12 +84,14 @@ project, the folders inside it are its parts, and a folder with neither is a gro
 {
   "roots": ["~/work", "~/Documents/code"],
   "roles": { "~/work/shop/coach": "pro" },
-  "browser": "Helium"
+  "browser": "Helium",
+  "window": "fullscreen"
 }
 ```
 
 `roots` says exactly where to look, `roles` puts a folder on a particular port (`website`, `admin`, `pro` or
-`other`), and `browser` chooses what links open in (the system's default without it).
+`other`), `browser` chooses what links open in (the system's default without it), and `window` opens the app's
+window `fullscreen` or `maximized` (at its own size without it).
 
 ## Projects, names, logos and previews
 
@@ -81,6 +100,10 @@ project, else its folder's name. Its logo is the best icon it ships (`apple-touc
 `favicon.svg`… in `public/`, `app/`, `assets/` and the like), else its first letter on a colour of its own.
 In the app, **Edit** on a project changes either: type a name, choose an image, or drop one on the page. What
 you chose is kept in `~/.config/carbon/projects.json`, with logos copied to `~/.config/carbon/logos/`.
+
+Beside each app are the marks of what it is built with: the tool its dev command runs, its runtime, and the
+well-known packages it depends on (React, Tailwind, TypeScript and so on), read from its own manifest. The list is
+in `src/stack.rs`.
 
 For each app Carbon shows its branch, when it was last committed to, how many files are uncommitted, and the last
 commit's first line. Every port that is serving shows a picture of its page, retaken every twenty seconds by a
@@ -124,8 +147,11 @@ repository's `helium` folder.
   `client.rs` and `main.rs` (the command).
 - `src/places.rs` finds where code lives and reads the config.
 - `src/identity.rs` works out what a project is called and what its logo is, and keeps what was chosen by hand.
+- `src/stack.rs` reads what each app is built with.
+- `marks/` holds the marks of the harnesses and the tools, shared by the app and the page. Its README says where
+  each comes from.
 - `desktop/` is the desktop app, in Rust, drawn with Rune: the same engine and server inside a native window.
-  `Carbon --snap out.png --scene now` renders the window to a picture without opening one (`--scene project`
+  `carbon-desktop --snap out.png --scene now` renders the window to a picture without opening one (`--scene project`
   for a project's page, `--theme light` for the light look).
 - `ui/` is the page, in TypeScript, because it runs in a browser: Vite, React, TanStack Router, Tailwind, Zustand.
   It is built into the binary, so the command and the app each carry it.
@@ -134,9 +160,11 @@ repository's `helium` folder.
 
 Carbon only listens on this machine and only answers requests addressed to `localhost:3000`.
 
-The agent marks in `ui/src/logos.tsx` are from the `@lobehub/icons-static-svg` set (MIT); each is its owner's
-trademark, used only to say which tool started something.
-
 ```bash
 mise run check    # cargo test, then types, oxlint and oxfmt for the page
 ```
+
+## Licence
+
+MIT: see [LICENSE](LICENSE). The marks in `marks/` are their owners' trademarks, used only to say which tool
+started or runs something; Carbon is not affiliated with or endorsed by any of them.

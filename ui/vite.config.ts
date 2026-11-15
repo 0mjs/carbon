@@ -9,6 +9,8 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    // The agents' marks are shared with the desktop app, one folder up
+    fs: { allow: ['..'] },
     proxy: { '/api': { target: 'http://localhost:3000', headers: { origin: 'http://localhost:3000' } } },
   },
 })

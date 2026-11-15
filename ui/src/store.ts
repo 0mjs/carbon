@@ -5,7 +5,7 @@ type Store = {
   snap: Snapshot | null
   /** Carbon has stopped answering */
   offline: boolean
-  /** What is mid-flight, e.g. "start:saas/cutwise/web", "stop:3001", "project:saas/cutwise" */
+  /** What is mid-flight, e.g. "start:work/shop/web", "stop:3001", "project:work/shop" */
   busy: string | null
   error: string | null
   /** Whose output the console shows: a port ("3001") or a job key ("create:lab/thing"), or nothing */

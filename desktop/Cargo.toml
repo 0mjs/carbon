@@ -1,11 +1,14 @@
 [package]
 name = "carbon-desktop"
-version = "0.5.0"
+version = "0.0.1"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/0mjs/carbon"
 description = "Carbon as a desktop app: the hub and its dashboard in a native window, drawn with Rune"
 
 [[bin]]
-name = "Carbon"
+# Not "Carbon": on a disk that ignores case that is the same file as the `carbon` command, built beside it
+name = "carbon-desktop"
 path = "src/main.rs"
 
 [dependencies]

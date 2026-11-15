@@ -30,6 +30,7 @@ use crate::agents::{self, Proc};
 use crate::detect::{self, Plan};
 use crate::identity;
 use crate::places;
+use crate::stack;
 
 pub const HUB_PORT: u16 = 3000;
 const POOL: RangeInclusive<u16> = 3004..=3019;
@@ -68,6 +69,8 @@ pub struct App {
     pub role: Role,
     pub kind: &'static str,
     pub runtime: Option<&'static str>,
+    /// What it is built with, for the logos beside its name
+    pub stack: Vec<&'static stack::Tech>,
     /// The project names its tool versions (mise.toml or .tool-versions)
     pub pinned: bool,
     #[serde(skip)]
@@ -139,7 +142,7 @@ pub struct Slot {
     /// When it stopped by itself: the last thing it said, which is usually why
     pub note: Option<String>,
     pub since: Option<u64>,
-    /// The agent that started what is on this port, if one did: claude, openai, gemini or grok
+    /// The harness of the agent that started what is on this port, if one did, by its id
     pub by: Option<&'static str>,
 }
 
@@ -161,13 +164,15 @@ pub struct Agent {
     /// The harness's key and name, e.g. "claude-code" and "Claude Code"
     pub harness: &'static str,
     pub name: &'static str,
-    /// Whose mark to show: claude, openai, gemini or grok
-    pub vendor: &'static str,
+    /// The app the session is running inside: an editor, a terminal, or an app made for running agents
+    pub host: Option<agents::Host>,
     pub pid: i32,
     pub cwd: Option<String>,
     pub since: u64,
     /// What the session is called, when the harness says
     pub title: Option<String>,
+    /// The model it last answered with, when the harness says
+    pub model: Option<String>,
     /// "busy" or "idle", when the harness says
     pub status: Option<String>,
     pub servers: Vec<Started>,
@@ -665,6 +670,7 @@ impl Hub {
                 part: spot.part,
                 kind: plan.kind,
                 runtime: plan.runtime,
+                stack: stack::of(&spot.dir, plan.kind, plan.runtime),
                 pinned: detect::pinned(&spot.dir),
                 by_env: plan.by_env(),
                 plan,
@@ -1108,13 +1114,14 @@ impl Hub {
             .sessions
             .iter()
             .map(|&(pid, harness)| Agent {
-                harness: harness.id(),
-                name: harness.name(),
-                vendor: harness.vendor(),
+                harness: harness.id,
+                name: harness.name,
+                host: None,
                 pid,
                 cwd: cwds.get(&pid).map(|c| tidy(c)),
                 since: ago(pid),
                 title: None,
+                model: None,
                 status: None,
                 servers: Vec::new(),
             })
@@ -1138,7 +1145,7 @@ impl Hub {
                 continue;
             }
             for member in tree {
-                by.insert(*member, agent.vendor);
+                by.insert(*member, agent.harness);
             }
             let cwd = cwds.get(pid);
             let mut command = tidy(table.get(pid).map_or("", |p| p.args.as_str()));
@@ -1161,10 +1168,33 @@ impl Hub {
         }
         // Only sessions that are serving something, each asked what it is called
         agents.retain(|a| !a.servers.is_empty());
+        // The app each session is running inside. A program the process table knows only by a bare name is
+        // asked for by its real path, since that is what says which app it belongs to
+        let bare: Vec<i32> = agents
+            .iter()
+            .flat_map(|a| agents::lineage(&table, a.pid))
+            .filter(|pid| {
+                table.get(pid).is_some_and(|p| {
+                    !p.program.starts_with('/') && !agents::SHELLS.contains(&p.name())
+                })
+            })
+            .collect();
+        let paths: HashMap<i32, String> = if bare.is_empty() {
+            HashMap::new()
+        } else {
+            fields(&lsof(&["-a", "-p", &csv(&bare), "-d", "txt", "-Fpn"]).await)
+                .into_iter()
+                .filter_map(|(pid, _, names)| Some((pid, names.into_iter().next()?)))
+                .collect()
+        };
+        for agent in &mut agents {
+            agent.host = agents::host(&table, agent.pid, &paths);
+        }
         for agent in &mut agents {
             if let Some((_, harness)) = found.sessions.iter().find(|s| s.0 == agent.pid) {
                 let session = harness.session(agent.pid, &home_dir);
                 agent.title = session.title;
+                agent.model = session.model;
                 agent.status = session.status;
             }
         }

@@ -10,7 +10,8 @@
 //!   ~/dev/work/thing        the same, one level down: "work" has no project markers, so it is a group of projects
 //!
 //! `~/.config/carbon/config.json` can override what was worked out: `roots` to say exactly where to look, `roles`
-//! to put a folder on a particular port, and `browser` to choose what opens links.
+//! to put a folder on a particular port, `browser` to choose what opens links, and `window` for how the desktop
+//! app's window opens.
 
 use std::{
     collections::HashMap,
@@ -65,6 +66,7 @@ struct RawConfig {
     #[serde(default)]
     roles: HashMap<String, String>,
     browser: Option<String>,
+    window: Option<String>,
 }
 
 #[derive(Default)]
@@ -75,6 +77,8 @@ pub struct Config {
     pub roles: HashMap<PathBuf, String>,
     /// The app links open in, e.g. "Helium". Without it, the system's default browser
     pub browser: Option<String>,
+    /// How the desktop app's window opens: "fullscreen" or "maximized". Without it, at its own size
+    pub window: Option<String>,
 }
 
 fn expand(home: &Path, path: &str) -> PathBuf {
@@ -101,6 +105,7 @@ pub fn config(home: &Path) -> Config {
             .map(|(path, role)| (expand(home, path), role.clone()))
             .collect(),
         browser: raw.browser,
+        window: raw.window,
     }
 }
 

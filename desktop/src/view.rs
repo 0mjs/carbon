@@ -90,7 +90,7 @@ fn found<'a>(snap: &'a Snapshot, typed: &str) -> Vec<&'a Project> {
     projects
 }
 
-fn list(s: &State, snap: &Snapshot, servers: &[Server], l: &Look) -> El {
+fn list(s: &State, snap: &Snapshot, servers: &[Server], top: f32, l: &Look) -> El {
     let running = servers.iter().filter(|server| server.live()).count();
 
     let mut home = entry(
@@ -177,7 +177,7 @@ fn list(s: &State, snap: &Snapshot, servers: &[Server], l: &Look) -> El {
         .w(LIST)
         .h_full()
         // The window's own buttons sit over this band, and it moves the window
-        .child(el().h(TITLEBAR).window_drag())
+        .child(el().h(top).window_drag())
         .child(search(s, l))
         .child(el().h(10.0))
         .child(home)
@@ -260,7 +260,13 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     if let Some(why) = &s.error {
         sheet = sheet.child(refusal(why, &l));
     }
+    // Room for the window's own buttons where they sit over the list; full screen has none
+    let top = if cx.chrome_insets().leading > 0.0 {
+        TITLEBAR
+    } else {
+        14.0
+    };
     window
-        .child(list(s, snap, &servers, &l))
+        .child(list(s, snap, &servers, top, &l))
         .child(sheet.child(page))
 }
