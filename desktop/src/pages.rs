@@ -5,18 +5,24 @@ use carbon::{
     identity::IMAGES,
 };
 use rune::{
-    Cursor, El, FileDialogOptions, Key, ScrollSpec, SurfaceFit, Tx, col, color::oklch, el, row,
-    text, text_input,
+    Color, Cursor, El, FileDialogOptions, Key, ScrollSpec, SurfaceFit, Tx, col, el, row, text,
+    text_input,
 };
 
 use crate::{
     Page, State, hub,
     look::{
-        Kind, Look, agent_mark, aura, button, chip, dot, hue, letter, lit, mark, mono,
-        plain_button, poster, raised, sans, tech_chip, tech_mark, tile, tone,
+        Kind, Look, agent_mark, arrive, button, chip, dot, icon, letter, mark, mono, plain_button,
+        poster, raised, sans, screen, tech_chip, tech_mark, tile,
     },
     model::{self, Origin, Server},
 };
+
+/// Every card's picture has this shape, running or not, so cards side by side always line up
+const RATIO: f32 = 16.0 / 10.0;
+/// The card's corners, and the picture's inside them, which keep the same distance all the way round
+const CARD_RADIUS: f32 = 18.0;
+const INSET: f32 = 6.0;
 
 fn open(port: u16) {
     hub().open(&format!("http://localhost:{port}"));
@@ -42,19 +48,66 @@ fn scrolling(body: El) -> El {
         .min_h(0.0)
 }
 
-/// A picture of what a port is serving, which opens it when pressed. Until one has been taken, the place it goes.
+/// What goes in a card's picture while there is no picture of the page yet: a light, and what it is waiting for
+fn waiting(status: &str, l: &Look) -> El {
+    let words = match status {
+        "starting" => "Starting",
+        "exited" => "Stopped",
+        "running" => "Looking at it",
+        _ => "Not running",
+    };
+    col()
+        .center()
+        .gap(8.0)
+        .child(dot(status, l))
+        .child(text(words).font(sans(11.5, 500.0)).color(l.faint))
+}
+
+/// A picture of what a port is serving, which opens it when pressed: under the pointer it says so, in a small
+/// pill in its corner. Its size never depends on the picture (see `screen`).
 fn picture(s: &State, server: &Server, l: &Look) -> El {
     let port = server.port;
-    let frame = row()
+    let inside = match s.shots.get(&port) {
+        Some(shot) if server.live() => el().pixels_fit(shot.pixels(), SurfaceFit::Fill),
+        _ => waiting(server.status, l),
+    };
+    let mut frame = screen(inside, RATIO, CARD_RADIUS - INSET, l)
         .key(format!("picture-{port}"))
-        .center()
-        .fill(l.well)
+        .hover_group()
         .cursor(Cursor::Pointer)
+        .press_scale(0.985)
         .on_press(move |_: &mut State| open(port));
-    match s.shots.get(&port) {
-        Some(shot) if server.live() => frame.pixels(shot.pixels()),
-        _ => frame.child(dot(server.status, l)),
+    if server.live() {
+        frame = frame.child(
+            row()
+                .pin(None, None, Some(10.0), Some(10.0))
+                .h(26.0)
+                .pl(10.0)
+                .pr(8.0)
+                .gap(5.0)
+                .center()
+                .radius(13.0)
+                .fill(Color::BLACK.alpha(0.55))
+                .backdrop_blur(14.0)
+                .border(1.0, Color::WHITE.alpha(0.12))
+                .group_opacity(0.0, 1.0)
+                .child(text("Open").font(sans(11.5, 600.0)).color(l.ink))
+                .child(icon(s, "arrow-up-right", 11.0)),
+        );
     }
+    frame
+}
+
+/// A card: its picture inset from the edge by the same distance all round, then whatever is said under it
+fn card(key: String, index: usize, picture: El, body: El, l: &Look) -> El {
+    arrive(
+        raised(col().key(key), CARD_RADIUS, l)
+            .min_w(0.0)
+            .padding(INSET)
+            .child(picture)
+            .child(body.grow(1.0)),
+        index,
+    )
 }
 
 /// An agent and the app it is running in: "Claude Code in Zed"
@@ -69,10 +122,7 @@ fn by(agent: &Agent) -> String {
 fn started(server: &Server) -> String {
     match &server.origin {
         Origin::Agent(agent) => format!("Started by {}", by(agent)),
-        Origin::Carbon => match server.since {
-            Some(since) if server.live() => format!("Up {}", model::up(since)),
-            _ => "Starting".into(),
-        },
+        Origin::Carbon => "Started by Carbon".into(),
         Origin::Hand => "Started by hand".into(),
     }
 }
@@ -80,7 +130,7 @@ fn started(server: &Server) -> String {
 /// Who started a server, as two lines beside the agent's mark: the session's name, then the harness, the app it
 /// is running in and the model. Anything not started by an agent says so in one line.
 fn who(s: &State, server: &Server, l: &Look) -> El {
-    let block = row().gap(10.0).center_y().min_h(36.0);
+    let block = row().gap(10.0).center_y().min_h(32.0);
     let Origin::Agent(agent) = &server.origin else {
         return block.child(
             text(started(server))
@@ -112,12 +162,12 @@ fn who(s: &State, server: &Server, l: &Look) -> El {
         }
         None => lines = lines.child(text(detail).font(sans(12.5, 500.0)).color(l.ink).truncate()),
     }
-    block.child(agent_mark(s, agent, 28.0, l)).child(lines)
+    block.child(agent_mark(s, agent, 24.0, l)).child(lines)
 }
 
 /* ---------- Running: every server on the machine ---------- */
 
-fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
+fn server_card(s: &State, snap: &Snapshot, server: &Server, index: usize, l: &Look) -> El {
     let port = server.port;
     let (pid, slot) = (server.pid, server.slot);
     let project = server.app.and_then(|app| model::project_of(snap, app));
@@ -140,19 +190,24 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
         (None, None) => server.what.clone(),
     };
     let face = match project {
-        Some(project) => tile(s, project, 34.0, l),
-        None => letter(&title, &title, 34.0, 8.0),
+        Some(project) => tile(s, project, 28.0, l),
+        None => letter(&title, &title, 28.0, 7.0),
     };
     let mut words = col()
+        .gap(2.0)
         .grow(1.0)
         .min_w(0.0)
-        .gap(1.0)
         .child(text(title).font(sans(14.0, 600.0)).color(l.ink).truncate());
     if !about.is_empty() {
-        words = words.child(text(about).font(sans(12.5, 400.0)).color(l.soft).truncate());
+        words = words.child(
+            text(about)
+                .font(sans(12.0, 400.0))
+                .color(l.faint)
+                .truncate(),
+        );
     }
     let mut name = row()
-        .gap(11.0)
+        .gap(10.0)
         .center_y()
         .grow(1.0)
         .min_w(0.0)
@@ -167,72 +222,81 @@ fn server_card(s: &State, snap: &Snapshot, server: &Server, l: &Look) -> El {
             .on_press(move |s: &mut State| s.go(page.clone()));
     }
 
-    let surface = col().key(format!("server-{port}"));
-    let card = match tone(server.status, l) {
-        Some(tone) => lit(surface, l.card, 16.0, tone, l),
-        None => raised(surface, l.card, 16.0, l),
-    };
-    card.child(
-        picture(s, server, l)
-            .w_full()
-            .aspect_ratio(1.6)
-            .corners([15.0, 15.0, 0.0, 0.0]),
-    )
-    .child(
-        col()
-            .padding(14.0)
-            .gap(12.0)
-            .child(
-                row()
-                    .gap(10.0)
-                    .center_y()
-                    .child(name)
-                    .child(address(port, l)),
-            )
-            .child(who(s, server, l))
-            .child(
-                row()
-                    .gap(8.0)
-                    .child(
-                        button(
-                            format!("stop-{port}"),
-                            "Stop",
-                            Kind::Quiet,
-                            s.busy.is_none(),
-                            l,
-                            move |s: &mut State| stop(s, port, pid, slot),
-                        )
-                        .grow(1.0),
-                    )
-                    .child(
-                        button(
-                            format!("open-{port}"),
-                            "Open",
-                            Kind::Main,
-                            server.live(),
-                            l,
-                            move |_: &mut State| open(port),
-                        )
-                        .grow(1.0),
-                    ),
-            ),
+    let body = col()
+        .px(8.0)
+        .pt(12.0)
+        .pb(4.0)
+        .gap(12.0)
+        .child(
+            row()
+                .gap(10.0)
+                .center_y()
+                .child(name)
+                .child(address(port, l)),
+        )
+        .child(who(s, server, l))
+        .child(el().grow(1.0))
+        .child(
+            row()
+                .gap(4.0)
+                .center_y()
+                .child(status_line(server, l))
+                .child(button(
+                    format!("stop-{port}"),
+                    "Stop",
+                    Kind::Ghost,
+                    s.busy.is_none(),
+                    l,
+                    move |s: &mut State| stop(s, port, pid, slot),
+                ))
+                .child(button(
+                    format!("open-{port}"),
+                    "Open",
+                    Kind::Main,
+                    server.live(),
+                    l,
+                    move |_: &mut State| open(port),
+                )),
+        );
+    card(
+        format!("server-{port}"),
+        index,
+        picture(s, server, l),
+        body,
+        l,
     )
 }
 
-/// A port as an address, the way a terminal would print it
-fn address(port: u16, l: &Look) -> El {
+/// Where a server is in its life, in a word or two beside its light, at the foot of its card
+fn status_line(server: &Server, l: &Look) -> El {
+    let words = match (server.status, server.since) {
+        ("starting", _) => "Starting".to_string(),
+        ("exited", _) => "Stopped by itself".to_string(),
+        ("running", Some(since)) => format!("Up {}", model::up(since)),
+        ("running", None) => "Live".to_string(),
+        _ => "Not running".to_string(),
+    };
     row()
-        .h(24.0)
-        .px(9.0)
-        .center()
-        .radius(8.0)
-        .fill(l.well)
-        .border(1.0, l.line)
+        .gap(4.0)
+        .center_y()
+        .grow(1.0)
+        .min_w(0.0)
+        .child(dot(server.status, l))
         .child(
-            text(format!("localhost:{port}"))
-                .font(mono(11.5))
-                .color(l.soft),
+            text(words)
+                .font(sans(12.0, 500.0))
+                .color(l.soft)
+                .truncate()
+                .min_w(0.0),
         )
+}
+
+/// A port, the way a terminal would print it: quietly, beside the name
+fn address(port: u16, l: &Look) -> El {
+    text(format!(":{port}"))
+        .font(mono(12.0))
+        .color(l.faint)
+        .selectable(true)
 }
 
 pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l: &Look) -> El {
@@ -247,7 +311,7 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
             .window_drag()
             .center()
             .gap(6.0)
-            .child(mark(s, "carbon", 56.0, l).shadow(0.0, 40.0, l.ink.alpha(0.12)))
+            .child(mark(s, "carbon", 48.0, l))
             .child(el().h(12.0))
             .child(
                 text("Nothing is running")
@@ -264,9 +328,9 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
         1 => "One server on this machine.".to_string(),
         n => format!("{n} servers on this machine."),
     };
-    let mut cards = el().key("cards").equal_columns(across).gap(18.0);
-    for server in up {
-        cards = cards.child(server_card(s, snap, server, l));
+    let mut cards = el().key("cards").equal_columns(across).gap(16.0);
+    for (index, server) in up.into_iter().enumerate() {
+        cards = cards.child(server_card(s, snap, server, index, l));
     }
     let heading = col()
         .key("heading")
@@ -275,16 +339,8 @@ pub fn running(s: &State, snap: &Snapshot, servers: &[Server], across: usize, l:
         .pb(22.0)
         .gap(4.0)
         .window_drag()
-        // The machine is on: a little green in the air
-        .child(aura(
-            el().size(48.0, 48.0).radius(24.0).fill(l.live),
-            30.0,
-            10.0,
-            7.0,
-            0.16,
-        ))
-        .child(text("Running").font(sans(26.0, 600.0)).color(l.ink))
-        .child(text(note).font(sans(13.0, 400.0)).color(l.ink.alpha(0.66)));
+        .child(text("Running").font(sans(24.0, 600.0)).color(l.ink))
+        .child(text(note).font(sans(13.0, 400.0)).color(l.faint));
     col()
         .key("running")
         .grow(1.0)
@@ -362,7 +418,8 @@ fn output(s: &State, l: &Look) -> El {
     col()
         .key("output")
         .h(232.0)
-        .radius(11.0)
+        .radius(14.0)
+        .continuous_corners()
         .fill(l.well)
         .border(1.0, l.line)
         .child(
@@ -373,34 +430,45 @@ fn output(s: &State, l: &Look) -> El {
         )
 }
 
-/// One app as a card: a picture of it once it is live, and until then the mark of what it is built with, lit
-/// from behind. Under that, what it is, where it is, where its code stands, and what can be done with it.
-fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Look) -> El {
+/// One app as a card: a picture of it once it is up, and until then the mark of what it is built with. Under
+/// that, what it is, where its code stands, and what can be done with it. The picture's shape is fixed, so a card
+/// is the same size running or not.
+fn app_card(
+    s: &State,
+    servers: &[Server],
+    project: &Project,
+    app: &App,
+    index: usize,
+    l: &Look,
+) -> El {
     let mine: Vec<&Server> = servers
         .iter()
         .filter(|server| server.app.is_some_and(|a| a.id == app.id))
         .collect();
     let first = mine.first().copied();
-    let status = first.map_or("idle", |server| server.status);
     let idle = s.busy.is_none();
     let id = app.id.clone();
 
-    let screen = match first.filter(|server| server.live()) {
+    let shot = match first.filter(|server| server.status != "exited") {
         Some(server) => picture(s, server, l),
-        None => poster(s, app.stack.first().copied(), tile(s, project, 52.0, l), l),
+        None => screen(
+            poster(s, app.stack.first().copied(), tile(s, project, 44.0, l), l),
+            RATIO,
+            CARD_RADIUS - INSET,
+            l,
+        ),
     };
 
     let name = row()
-        .gap(9.0)
+        .gap(10.0)
         .center_y()
-        .child(dot(status, l))
         .child(
             text(
                 app.part
                     .as_deref()
                     .map_or_else(|| project.title.clone(), model::named),
             )
-            .font(sans(15.5, 600.0))
+            .font(sans(14.5, 600.0))
             .color(l.ink)
             .truncate()
             .grow(1.0)
@@ -410,21 +478,19 @@ fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Loo
 
     // What it is built with: the main thing by name, the rest as marks. Failing that, the kind of command it runs
     let stack = match app.stack.split_first() {
-        Some((main, rest)) => rest.iter().take(6).fold(
-            row().gap(6.0).center_y().child(tech_chip(s, main, l)),
-            |stack, tech| stack.child(tech_mark(s, tech, 20.0, l)),
+        Some((main, rest)) => rest.iter().take(5).fold(
+            row()
+                .gap(6.0)
+                .center_y()
+                .child(tech_chip(s, main, l))
+                .child(el().w(2.0)),
+            |stack, tech| stack.child(tech_mark(s, tech, 20.0, l).opacity(0.85)),
         ),
         None => row().child(chip(app.kind, l)),
     };
 
     // Two lines kept for where the code stands, whether it says anything or not, so cards in a row line up
-    let mut words = col().gap(4.0).child(
-        text(doing(app, &mine, servers))
-            .font(sans(12.5, 400.0))
-            .color(l.soft)
-            .truncate(),
-    );
-    words = words.child(
+    let mut words = col().gap(6.0).child(stack).child(
         text(standing(app).unwrap_or_default())
             .font(sans(12.0, 400.0).lh(17.0))
             .color(l.faint)
@@ -442,33 +508,45 @@ fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Loo
         );
     }
 
-    // What can be done with it, across the foot of the card, with the thing to press last
-    let mut buttons = row().gap(8.0);
+    // Where it is in its life on the left of the foot, and what can be done with it on the right, the thing to
+    // press last
+    let says = row()
+        .gap(4.0)
+        .center_y()
+        .grow(1.0)
+        .min_w(0.0)
+        .child(dot(first.map_or("idle", |server| server.status), l))
+        .child(
+            text(doing(app, &mine, servers))
+                .font(sans(12.0, 500.0))
+                .color(l.soft)
+                .truncate()
+                .min_w(0.0),
+        )
+        .help(doing(app, &mine, servers));
+    let mut foot = row().gap(4.0).center_y().child(says);
     match first {
         None => {
             let starting = s.busy.as_deref() == Some(format!("start:{id}").as_str());
             let run = id.clone();
-            buttons = buttons.child(
-                button(
-                    format!("run-{id}"),
-                    if starting { "Starting…" } else { "Run" },
-                    Kind::Main,
-                    idle,
-                    l,
-                    move |s: &mut State| s.start(run.clone()),
-                )
-                .grow(1.0),
-            );
+            foot = foot.child(button(
+                format!("run-{id}"),
+                if starting { "Starting…" } else { "Run" },
+                Kind::Main,
+                idle,
+                l,
+                move |s: &mut State| s.start(run.clone()),
+            ));
         }
         Some(server) => {
             let port = server.port;
             let (pid, slot) = (server.pid, server.slot);
             if server.logs {
                 let showing = s.output == Some(port);
-                buttons = buttons.child(button(
+                foot = foot.child(button(
                     format!("output-{port}"),
                     if showing { "Hide output" } else { "Output" },
-                    Kind::Quiet,
+                    Kind::Ghost,
                     true,
                     l,
                     move |s: &mut State| {
@@ -478,63 +556,51 @@ fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Loo
             }
             if server.status == "exited" {
                 let run = id.clone();
-                buttons = buttons
-                    .child(
-                        button(
-                            format!("clear-{port}"),
-                            "Dismiss",
-                            Kind::Quiet,
-                            idle,
-                            l,
-                            move |s: &mut State| s.stop(port),
-                        )
-                        .grow(1.0),
-                    )
-                    .child(
-                        button(
-                            format!("run-{id}"),
-                            "Run again",
-                            Kind::Main,
-                            idle,
-                            l,
-                            move |s: &mut State| s.start(run.clone()),
-                        )
-                        .grow(1.0),
-                    );
+                foot = foot
+                    .child(button(
+                        format!("clear-{port}"),
+                        "Dismiss",
+                        Kind::Ghost,
+                        idle,
+                        l,
+                        move |s: &mut State| s.stop(port),
+                    ))
+                    .child(button(
+                        format!("run-{id}"),
+                        "Run again",
+                        Kind::Main,
+                        idle,
+                        l,
+                        move |s: &mut State| s.start(run.clone()),
+                    ));
             } else {
-                buttons = buttons
-                    .child(
-                        button(
-                            format!("stop-{port}"),
-                            "Stop",
-                            Kind::Quiet,
-                            idle,
-                            l,
-                            move |s: &mut State| stop(s, port, pid, slot),
-                        )
-                        .grow(1.0),
-                    )
-                    .child(
-                        button(
-                            format!("open-{port}"),
-                            "Open",
-                            Kind::Main,
-                            server.live(),
-                            l,
-                            move |_: &mut State| open(port),
-                        )
-                        .grow(1.0),
-                    );
+                foot = foot
+                    .child(button(
+                        format!("stop-{port}"),
+                        "Stop",
+                        Kind::Ghost,
+                        idle,
+                        l,
+                        move |s: &mut State| stop(s, port, pid, slot),
+                    ))
+                    .child(button(
+                        format!("open-{port}"),
+                        "Open",
+                        Kind::Main,
+                        server.live(),
+                        l,
+                        move |_: &mut State| open(port),
+                    ));
             }
         }
     }
 
     let mut body = col()
-        .padding(14.0)
+        .px(8.0)
+        .pt(12.0)
+        .pb(4.0)
         .gap(12.0)
-        .grow(1.0)
         .child(name)
-        .child(stack)
         .child(words);
     // The same app serving somewhere else as well: an agent's copy beside Carbon's, say
     for server in mine.iter().skip(1) {
@@ -543,12 +609,12 @@ fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Loo
         body = body.child(
             row()
                 .key(format!("also-{port}"))
-                .gap(8.0)
+                .gap(4.0)
                 .center_y()
                 .child(dot(server.status, l))
                 .child(
-                    text(format!("Also on {port}"))
-                        .font(sans(12.5, 400.0))
+                    text(format!("Also on :{port}"))
+                        .font(sans(12.0, 500.0))
                         .color(l.soft)
                         .truncate()
                         .grow(1.0)
@@ -557,7 +623,7 @@ fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Loo
                 .child(button(
                     format!("stop-{port}"),
                     "Stop",
-                    Kind::Quiet,
+                    Kind::Ghost,
                     idle,
                     l,
                     move |s: &mut State| stop(s, port, pid, slot),
@@ -565,30 +631,16 @@ fn app_card(s: &State, servers: &[Server], project: &Project, app: &App, l: &Loo
                 .child(button(
                     format!("open-{port}"),
                     "Open",
-                    Kind::Quiet,
+                    Kind::Ghost,
                     server.live(),
                     l,
                     move |_: &mut State| open(port),
                 )),
         );
     }
-    // The buttons keep to the foot of the card, however much the cards beside it have to say
-    body = body.child(el().grow(1.0)).child(buttons);
-
-    // A card with something on it is lit in that thing's colour
-    let surface = col().key(format!("app-{}", app.id));
-    let card = match tone(status, l) {
-        Some(tone) => lit(surface, l.card, 16.0, tone, l),
-        None => raised(surface, l.card, 16.0, l),
-    };
-    card.child(
-        screen
-            .w_full()
-            .aspect_ratio(1.9)
-            .corners([15.0, 15.0, 0.0, 0.0])
-            .clip_corners([15.0, 15.0, 0.0, 0.0]),
-    )
-    .child(body)
+    // The foot keeps to the bottom of the card, however much the cards beside it have to say
+    body = body.child(el().grow(1.0)).child(foot);
+    card(format!("app-{}", app.id), index, shot, body, l)
 }
 
 /// The name as a field, and the ways to change the logo
@@ -662,18 +714,6 @@ fn changing(s: &State, project: &Project, l: &Look) -> El {
     )
 }
 
-/// Light behind a project's name, in the project's own colours: its logo, far out of focus
-fn glow(s: &State, project: &Project) -> El {
-    let small = el().size(48.0, 48.0);
-    let light = match s.logos.get(&project.key) {
-        Some((_, logo)) => small.pixels_fit(logo.pixels(), SurfaceFit::Fill),
-        None => small
-            .radius(24.0)
-            .fill(oklch(0.62, 0.16, hue(&project.key))),
-    };
-    aura(light, 40.0, 38.0, 7.0, 0.34)
-}
-
 pub fn project(
     s: &State,
     snap: &Snapshot,
@@ -710,10 +750,9 @@ pub fn project(
     let words = if s.editing {
         changing(s, project, l)
     } else {
-        // These sit over the project's light, so they are white let through rather than a grey of their own
         let mut words = col().gap(5.0).child(
             text(project.title.clone())
-                .font(sans(26.0, 600.0))
+                .font(sans(24.0, 600.0))
                 .color(l.ink)
                 .truncate(),
         );
@@ -721,7 +760,7 @@ pub fn project(
             words = words.child(
                 text(says.clone())
                     .font(sans(13.0, 400.0).lh(19.0))
-                    .color(l.ink.alpha(0.78))
+                    .color(l.soft)
                     .wrap()
                     .max_lines(2),
             );
@@ -729,7 +768,7 @@ pub fn project(
         words.child(
             text(model::folder(&project.group, &project.name))
                 .font(sans(12.0, 400.0))
-                .color(l.ink.alpha(0.62))
+                .color(l.faint)
                 .truncate(),
         )
     };
@@ -790,8 +829,7 @@ pub fn project(
         .pb(24.0)
         .gap(18.0)
         .window_drag()
-        .child(glow(s, project))
-        .child(tile(s, project, 64.0, l).shadow(8.0, 24.0, l.shadow))
+        .child(tile(s, project, 56.0, l))
         .child(words.grow(1.0).min_w(0.0))
         .child(actions);
 
@@ -799,14 +837,14 @@ pub fn project(
     let mut cards = el()
         .key("apps")
         .equal_columns(across.max(apps.len().min(2)))
-        .gap(18.0);
+        .gap(16.0);
     let ports: Vec<u16> = servers
         .iter()
         .filter(|server| server.app.is_some_and(|a| project.apps.contains(&a.id)))
         .map(|server| server.port)
         .collect();
-    for app in apps {
-        cards = cards.child(app_card(s, servers, project, app, l));
+    for (index, app) in apps.into_iter().enumerate() {
+        cards = cards.child(app_card(s, servers, project, app, index, l));
     }
     let mut body = col().key("project-body").gap(18.0).child(cards);
     // What one of them printed, across the page under the cards

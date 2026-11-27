@@ -1,7 +1,7 @@
-//! Carbon: the local hub for the dev servers on this machine. Always on port 3000, and only on this machine.
+//! Carbon: the local hub for the dev servers on this machine, and only on this machine.
 //!
-//! The same engine sits behind three fronts: the page (served by `server`), the `carbon` command (which talks to a
-//! running hub through `client`), and the desktop app (which runs the hub inside itself).
+//! The same engine sits behind two fronts: the desktop app (which runs the hub inside itself), and the `carbon`
+//! command (which talks to a running hub through `client`, over the small API in `server`).
 
 pub mod agents;
 pub mod client;

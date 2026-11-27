@@ -5,13 +5,13 @@ use std::{env, process::ExitCode, sync::Arc, thread, time::Duration};
 
 use carbon::{
     client::{self, NOT_RUNNING},
-    engine::{HUB_PORT, Hub},
+    engine::Hub,
     server,
 };
 use serde_json::{Value, json};
 
 const HELP: &str = "\
-carbon: the local hub for your dev servers, always on port 3000
+carbon: the local hub for your dev servers
 
   carbon                  run the hub (the same as `carbon serve`)
   carbon ls               what is on each port, and what else is running
@@ -22,9 +22,7 @@ carbon: the local hub for your dev servers, always on port 3000
   carbon open <app|port>  open it in the browser
   carbon logs <port> [-f] what a server Carbon started has printed; -f keeps following
   carbon new <folder>/<name> [start|spa|bun]
-                          create a project (TanStack Start by default)
-
-Set CARBON_OPEN=0 to stop `carbon serve` opening the dashboard.";
+                          create a project (TanStack Start by default)";
 
 fn text(value: &Value) -> &str {
     value.as_str().unwrap_or("")
@@ -188,7 +186,7 @@ fn run(word: &str) -> Result<(), String> {
     }
     match matching(&apps, word).as_slice() {
         [] => Err(format!(
-            "No project matches \"{word}\". `carbon ls` shows what is running; the dashboard lists every app."
+            "No project matches \"{word}\". `carbon ls` shows what is running; the app lists every one."
         )),
         [app] => {
             let port = client::post("/api/start", json!({ "id": app["id"] }))?["port"].clone();
@@ -293,23 +291,19 @@ fn new(target: &str, template: &str) -> Result<(), String> {
 async fn serve() -> Result<(), String> {
     if client::running() {
         return Err(format!(
-            "Carbon is already running on http://localhost:{HUB_PORT}"
+            "Carbon is already running (the app, or another `carbon serve`)"
         ));
     }
     let hub = Arc::new(Hub::new());
     server::listen(hub.clone()).await?;
     println!(
-        "Carbon is on http://localhost:{HUB_PORT}{}",
+        "Carbon is running{}",
         if hub.mise.is_some() {
             ""
         } else {
             " (mise not found: servers run without it)"
         }
     );
-    // Bring the dashboard up in the browser. CARBON_OPEN=0 skips it
-    if env::var("CARBON_OPEN").as_deref() != Ok("0") {
-        hub.open(&format!("http://localhost:{HUB_PORT}"));
-    }
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
         .map_err(|e| e.to_string())?;
     tokio::select! {
@@ -334,10 +328,9 @@ async fn main() -> ExitCode {
             client::post("/api/stop", json!({ "port": port })).map(|_| println!("Stopped {port}"))
         }),
         (Some("open"), Some(what)) => port_of(what).and_then(open),
-        (Some("open"), None) => client::post("/api/open", json!({ "port": HUB_PORT })).map(|_| ()),
         (Some("logs"), Some(what)) => logs(what, args.iter().any(|a| a == "-f" || a == "--follow")),
         (Some("new"), Some(target)) => new(target, arg(2).unwrap_or("start")),
-        (Some("run" | "start" | "stop" | "logs"), None) => Err(needs("app or port")),
+        (Some("run" | "start" | "stop" | "open" | "logs"), None) => Err(needs("app or port")),
         (Some("new"), None) => Err(needs("group>/<name")),
         (Some("help" | "-h" | "--help"), _) => Ok(println!("{HELP}")),
         (Some("version" | "-V" | "--version"), _) => {

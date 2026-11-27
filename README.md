@@ -1,7 +1,7 @@
 # Carbon
 
-A desktop app, a command, and a dashboard for the dev servers on your machine. It finds your projects by itself,
-is always on **http://localhost:3000**, and gives every app a port of its own.
+A desktop app and a command for the dev servers on your machine. It finds your projects by itself and gives every
+app a port of its own. Carbon itself takes no port you would ever want: there is no web page to keep free.
 
 ![Carbon's Running page: three dev servers, each with a picture of its page and the agent session that started it](docs/running.webp)
 
@@ -13,10 +13,9 @@ that aside. What each app was given is in `~/.config/carbon/ports.json`.
 Carbon is early: this is 0.0.4. It is built and used on macOS; the engine and the app are written to be portable,
 but Linux and Windows are untried.
 
-## Three ways in
+## Two ways in
 
-You need [mise](https://mise.jdx.dev) (Carbon starts everything through it, and it supplies Bun for building the
-page) and Rust from [rustup](https://rustup.rs), which picks up the version in `rust-toolchain.toml` by itself.
+You need [mise](https://mise.jdx.dev) (Carbon starts everything through it) and Rust from [rustup](https://rustup.rs), which picks up the version in `rust-toolchain.toml` by itself.
 
 ```bash
 git clone https://github.com/0mjs/carbon && cd carbon
@@ -33,7 +32,9 @@ mise run start        # or just run the hub in this terminal
   **a project**, with each of its apps to run, open and stop. Search the list with ⌘K, and pin the projects you
   use most to the top of it. Closing the window leaves Carbon and every server running (click the Dock icon to bring it back);
   quitting stops Carbon and the servers it started.
-- **The command** talks to whichever hub is running (the app, or `carbon serve`):
+- **The command** talks to whichever hub is running (the app, or `carbon serve`), on port 47213: a port worked out
+  to be one nothing else wants, clear of the ports dev tools pick, of the ports apps are given, and of the ones
+  macOS hands out by itself. The app opens whatever is on it, and takes it once it is free.
 
   ```
   carbon ls               what is on each port, and what else is running
@@ -45,7 +46,6 @@ mise run start        # or just run the hub in this terminal
   carbon new <folder>/<name> [start|spa|bun]
   ```
 
-- **The dashboard** is the same page in any browser at `localhost:3000`, with a ⌘K palette for run, stop and open.
 
 ![A project's page: one app live with a picture of its page, the other waiting under the mark of what it is built with](docs/project.webp)
 
@@ -141,37 +141,29 @@ installed first. If a server stops by itself, its port shows the last thing it p
 "New project" (or `carbon new`) creates a project in one of the folders Carbon found, from a template (TanStack Start, TanStack Router, or
 an empty Bun project) and pins Bun in its `mise.toml`.
 
-## New tabs in Helium
-
-`helium/` is a small extension that makes every new tab the dashboard (or a note saying Carbon isn't running).
-Install it once: open `helium://extensions`, turn on Developer mode, choose "Load unpacked" and pick this
-repository's `helium` folder.
-
 ## How it is built
 
 - `src/` is the engine, the server and the command, in Rust: `engine.rs` (finding apps, starting and stopping,
   reading what is listening from the OS), `detect.rs` (how to run each kind of project), `agents.rs` and
-  `harness.rs` (who started what), `create.rs` (new projects), `server.rs` (the HTTP API and the page),
+  `harness.rs` (who started what), `create.rs` (new projects), `server.rs` (the HTTP API the command uses),
   `client.rs` and `main.rs` (the command).
 - `src/places.rs` finds where code lives and reads the config.
 - `src/identity.rs` works out what a project is called and what its logo is, and keeps what was chosen by hand.
 - `src/stack.rs` reads what each app is built with.
-- `marks/` holds the marks of the harnesses and the tools, shared by the app and the page. Its README says where
+- `marks/` holds the marks of the harnesses and the tools, used by the app. Its README says where
   each comes from.
 - `desktop/` is the desktop app, in Rust, drawn with Rune: the same engine and server inside a native window.
   `carbon-desktop --snap out.png --scene now` renders the window to a picture without opening one (`--scene project`
   for a project's page, `--theme light` for the light look).
-- `ui/` is the page, in TypeScript, because it runs in a browser: Vite, React, TanStack Router, Tailwind, Zustand.
-  It is built into the binary, so the command and the app each carry it.
 - `docs/` holds the pictures in this file. Each is the app's own rendering (`carbon-desktop --snap`), framed as a
   window by `docs/frame.sh`.
 - `brand/` is the logo: `mark.svg` (the mark alone, in the text colour), `icon.svg` (the app icon as a drawing), and
   `icon-1024.png` and `Carbon.icns`, which `brand/build.sh` makes with ImageMagick.
 
-Carbon only listens on this machine and only answers requests addressed to `localhost:3000`.
+Carbon only listens on this machine, and turns away any request a web page sends.
 
 ```bash
-mise run check    # cargo test, then types, oxlint and oxfmt for the page
+mise run check    # cargo test and rustfmt
 ```
 
 ## Licence

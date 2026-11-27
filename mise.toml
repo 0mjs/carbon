@@ -1,11 +1,9 @@
 # Carbon's own tools and commands.
-[tools]
-bun = "latest"
 # Rust itself comes from rustup, at the version in rust-toolchain.toml
 
 [tasks.start]
-description = "Build the page, then run the hub on port 3000 in this terminal"
-run = ["cd ui && bun install && bun run build", "cargo run --release -- serve"]
+description = "Run the hub in this terminal, without the app"
+run = "cargo run --release -- serve"
 
 [tasks.app]
 description = "Build Carbon.app into dist/ and open it"
@@ -13,12 +11,12 @@ run = ["./desktop/bundle.sh", "open dist/Carbon.app"]
 
 [tasks.install-app]
 description = "Build Carbon.app and put it in /Applications (macOS)"
-run = ["./desktop/bundle.sh", "rm -rf /Applications/Carbon.app", "ditto dist/Carbon.app /Applications/Carbon.app", "echo Installed /Applications/Carbon.app"]
+run = ["./desktop/bundle.sh", "osascript -e 'quit app \"Carbon\"' 2>/dev/null || true", "rm -rf /Applications/Carbon.app", "ditto dist/Carbon.app /Applications/Carbon.app", "echo Installed /Applications/Carbon.app"]
 
 [tasks.install]
 description = "Install the `carbon` command into ~/.cargo/bin"
-run = ["cd ui && bun install && bun run build", "cargo install --path . --locked"]
+run = "cargo install --path . --locked"
 
 [tasks.check]
-description = "Tests, types, lint and format for every part"
-run = ["cargo test", "cd ui && bun run check"]
+description = "Tests and format"
+run = ["cargo test", "cargo fmt --check"]

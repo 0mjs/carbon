@@ -1,4 +1,4 @@
-//! How the `carbon` command talks to a running hub: plain HTTP to port 3000 on this machine, nothing more.
+//! How the `carbon` command talks to a running hub: plain HTTP to the hub's port on this machine, nothing more.
 //! Small enough to do by hand, which keeps the command quick to start and the binary small.
 
 use std::{
@@ -56,7 +56,7 @@ pub fn post(path: &str, body: Value) -> Result<Value, String> {
     request("POST", path, Some(&body))
 }
 
-/// True when a hub is already answering on port 3000
+/// True when a hub is already answering on its port
 pub fn running() -> bool {
     get("/api/state").is_ok()
 }

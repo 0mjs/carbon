@@ -2,7 +2,7 @@
 //! and Linux.
 //!
 //! The app is the hub: it runs the same engine and server as `carbon serve`, inside its own process, so the
-//! `carbon` command and the page at localhost:3000 keep working beside it. Closing the window leaves Carbon and
+//! `carbon` command keeps working beside it. Closing the window leaves Carbon and
 //! every server running (click the Dock icon to bring the window back); quitting stops Carbon and the servers it
 //! started.
 //!
@@ -39,7 +39,7 @@ use rune::{
 /// The engine, and the runtime its async work runs on. Set once at start-up, before the window opens.
 static HUB: OnceLock<Arc<Hub>> = OnceLock::new();
 static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-/// Whether this app is the one answering on port 3000, and whether it should be (a picture of the window isn't)
+/// Whether this app is the one answering on the hub's port, and whether it should be (a picture of the window isn't)
 static SERVING: AtomicBool = AtomicBool::new(false);
 static WANTS_PORT: AtomicBool = AtomicBool::new(false);
 
@@ -125,7 +125,11 @@ pub enum Page {
 }
 
 /// The interface's own icons, by name
-const ICONS: [(&str, &[u8]); 4] = [
+const ICONS: [(&str, &[u8]); 5] = [
+    (
+        "arrow-up-right",
+        include_bytes!("../assets/icons/arrow-up-right.svg"),
+    ),
     ("check", include_bytes!("../assets/icons/check.svg")),
     (
         "folder-search",
@@ -497,7 +501,7 @@ fn poll(s: &mut State, clock: f64, tx: &mut Tx) -> bool {
 
     if clock >= s.next {
         s.next = clock + 1.5;
-        // Another Carbon had port 3000 when this one started: once it has gone, this one answers there
+        // Something else had the hub's port when this one started: once it has gone, this one answers there
         if WANTS_PORT.load(Ordering::Relaxed) && !SERVING.load(Ordering::Relaxed) {
             runtime().spawn(async {
                 if server::take_over(hub().clone()).await {
@@ -607,18 +611,20 @@ fn main() {
         .build()
         .expect("a runtime for the engine");
     let hub = Arc::new(Hub::new());
-    // A hub already answering on 3000 (a `carbon serve` in a terminal) keeps the port; this app then shows and
-    // controls the machine through its own engine, and takes the port over if that hub goes. A picture of the
+    // A hub already answering on the hub's port (a `carbon serve` in a terminal) keeps it; this app then shows and
+    // controls the machine through its own engine, and takes the port over once it is free. The window opens
+    // whatever is on the port: the app needs no port of its own, only the `carbon` command does. A picture of the
     // window taken without opening one is not a hub at all, and leaves the port alone.
     let picture = std::env::args().any(|arg| {
         ["--snap", "--tree", "--video", "--out", "--strip", "--html"].contains(&arg.as_str())
     });
     if !picture && !client::running() {
-        if let Err(why) = runtime.block_on(server::listen(hub.clone())) {
-            eprintln!("{why}");
-            std::process::exit(1);
+        match runtime.block_on(server::listen(hub.clone())) {
+            Ok(()) => SERVING.store(true, Ordering::Relaxed),
+            Err(why) => eprintln!(
+                "{why}\nOpening anyway; the `carbon` command will reach this app once it is free."
+            ),
         }
-        SERVING.store(true, Ordering::Relaxed);
     }
     WANTS_PORT.store(!picture, Ordering::Relaxed);
     // How the window opens is the person's choice, from the config

@@ -3,9 +3,7 @@
 //! in the folders they live in.
 
 use carbon::engine::{Project, Snapshot};
-use rune::{
-    Color, Cursor, Cx, El, Key, ScrollSpec, TextEdit, Tx, col, el, row, spacer, text, text_input,
-};
+use rune::{Cursor, Cx, El, Key, ScrollSpec, TextEdit, Tx, col, el, row, spacer, text, text_input};
 
 use crate::{
     Page, State, TITLEBAR,
@@ -33,9 +31,7 @@ fn entry(key: String, chosen: bool, l: &Look, page: Page) -> El {
             page => s.go(page.clone()),
         });
     if chosen {
-        entry
-            .gradient(l.quiet.0, l.quiet.1)
-            .border_gradient(1.0, l.rim.0, l.rim.1)
+        entry.fill(l.quiet).border(1.0, l.edge)
     } else {
         entry.hover(l.over)
     }
@@ -328,23 +324,8 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
         .radius(16.0)
         .continuous_corners()
         .clip_rounded(16.0)
-        .gradient(l.sheet.0, l.sheet.1)
-        .border_gradient(1.0, l.rim.0.alpha(0.1), l.rim.1);
-    // A soft light falling on the sheet from above, so the black has depth
-    sheet = sheet.child(
-        el().key("light")
-            .absolute(0.0, 0.0)
-            .w_full()
-            .h(420.0)
-            .radial_gradient(
-                [0.5, 0.0],
-                [760.0, 420.0],
-                [
-                    (0.0, Color::WHITE.alpha(0.055)),
-                    (1.0, Color::WHITE.alpha(0.0)),
-                ],
-            ),
-    );
+        .fill(l.sheet)
+        .border(1.0, l.line);
     if let Some(why) = &s.error {
         sheet = sheet.child(refusal(why, &l));
     }

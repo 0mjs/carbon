@@ -8,7 +8,7 @@ version = "0.0.4"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/0mjs/carbon"
-description = "A local hub for dev servers: always on port 3000, it finds your projects and starts, stops and shows every server"
+description = "A local hub for dev servers: it finds your projects and starts, stops and shows every server"
 
 [lib]
 name = "carbon"
@@ -21,7 +21,6 @@ path = "src/main.rs"
 [dependencies]
 axum = "0.8"
 libc = "0.2"
-rust-embed = { version = "8", features = ["mime-guess"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "io-util", "net", "signal", "time", "fs"] }

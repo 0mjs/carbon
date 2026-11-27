@@ -1,16 +1,16 @@
-//! The hub's HTTP side: a small JSON API over the engine, and the page (built from `ui/`, carried inside the binary).
+//! The hub's HTTP side: a small JSON API over the engine, for the `carbon` command. There is no web page: Carbon is
+//! looked at in its app.
 
 use std::{process::Command, sync::Arc};
 
 use axum::{
     Json, Router,
     extract::{Path, Request, State},
-    http::{Method, StatusCode, Uri, header},
+    http::{StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use rust_embed::RustEmbed;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
@@ -19,11 +19,6 @@ use crate::{
     create,
     engine::{HUB_PORT, Hub},
 };
-
-/// The built page. In a release build it is inside the binary, so `carbon` runs from anywhere.
-#[derive(RustEmbed)]
-#[folder = "ui/dist/"]
-struct Page;
 
 type Shared = State<Arc<Hub>>;
 type Reply = Result<Json<Value>, (StatusCode, Json<Value>)>;
@@ -42,56 +37,30 @@ fn is_local(host: &str) -> bool {
     .any(|h| h == host)
 }
 
-/// Carbon can start and stop processes, so it only answers its own page: a request must be addressed to
-/// localhost:3000 and, when the browser says where it came from, have come from there too. That shuts out other
-/// sites open in the same browser, and names that merely resolve to this machine.
+/// Carbon can start and stop processes, so it only answers requests addressed to its own port on this machine
+/// that no web page sent: a browser always says where a request came from, and the `carbon` command never does.
+/// That shuts out every site open in a browser, and names that merely resolve to this machine.
 async fn local_only(request: Request, next: Next) -> Response {
-    let allowed = {
-        let headers = request.headers();
-        let text = |name: header::HeaderName| {
-            headers
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .map(str::to_owned)
-        };
-        let host_ok = text(header::HOST).is_some_and(|h| is_local(&h));
-        let origin_ok =
-            text(header::ORIGIN).is_none_or(|o| is_local(o.trim_start_matches("http://")));
-        host_ok && (origin_ok || request.method() == Method::GET)
-    };
-    if !allowed {
-        return (StatusCode::FORBIDDEN, "Carbon only answers its own page").into_response();
+    let headers = request.headers();
+    let host_ok = headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(is_local);
+    let from_page = headers.contains_key(header::ORIGIN) || headers.contains_key("sec-fetch-site");
+    if !host_ok || from_page {
+        return (
+            StatusCode::FORBIDDEN,
+            "Carbon only answers the `carbon` command",
+        )
+            .into_response();
     }
     next.run(request).await
 }
 
-async fn page(uri: Uri) -> Response {
-    let path = uri.path().trim_start_matches('/');
-    // Any address that isn't a file is the page itself, which reads the address and shows the right thing
-    let (name, file) = match Page::get(path) {
-        Some(file) if !path.is_empty() => (path, file),
-        _ => match Page::get("index.html") {
-            Some(file) => ("index.html", file),
-            None => {
-                return (
-                    StatusCode::NOT_FOUND,
-                    "Carbon's page isn't built: run `bun run build` in ui/",
-                )
-                    .into_response();
-            }
-        },
-    };
-    let cache = if name.starts_with("assets/") {
-        "public, max-age=31536000, immutable"
-    } else {
-        "no-cache"
-    };
+async fn nothing() -> Response {
     (
-        [
-            (header::CONTENT_TYPE, file.metadata.mimetype().to_string()),
-            (header::CACHE_CONTROL, cache.to_string()),
-        ],
-        file.data,
+        StatusCode::NOT_FOUND,
+        "Carbon has no web page: open the Carbon app, or use the `carbon` command",
     )
         .into_response()
 }
@@ -164,8 +133,7 @@ async fn pin(State(hub): Shared, Json(body): Json<ById>) -> Reply {
         .map_err(failed)
 }
 
-/// Opens a local port in the real browser. The desktop app's own window is for the dashboard, so its "Open"
-/// buttons come here; so does `carbon open`.
+/// Opens a local port in the browser, for `carbon open`
 async fn open(State(hub): Shared, Json(body): Json<ByPort>) -> Reply {
     if body.port < 1024 {
         return Err(failed(format!("{} isn't a port Carbon opens", body.port)));
@@ -207,12 +175,12 @@ fn router(hub: Arc<Hub>) -> Router {
         .route("/api/create", post(new_project))
         .route("/api/open", post(open))
         .route("/api/preview/{port}", get(preview))
-        .fallback(page)
+        .fallback(nothing)
         .layer(middleware::from_fn(local_only))
         .with_state(hub)
 }
 
-/// Port 3000 on both loopback addresses, or nothing if either is taken. "localhost" can mean either address, and
+/// The hub's port on both loopback addresses, or nothing if either is taken. "localhost" can mean either address, and
 /// a browser tries IPv6 first, so Carbon takes both: nothing else can sit on one of them and answer in its place.
 async fn bind() -> Option<Vec<TcpListener>> {
     let mut listeners = Vec::new();
@@ -229,7 +197,7 @@ fn serve(hub: &Arc<Hub>, listeners: Vec<TcpListener>) {
     }
 }
 
-/// Starts answering on port 3000 and returns once it is. If something already has the port, the error says what.
+/// Starts answering on the hub's port and returns once it is. If something already has the port, the error says what.
 pub async fn listen(hub: Arc<Hub>) -> Result<(), String> {
     let Some(listeners) = bind().await else {
         let holder = Command::new("lsof")
@@ -246,7 +214,7 @@ pub async fn listen(hub: Arc<Hub>) -> Result<(), String> {
     Ok(())
 }
 
-/// Starts answering on port 3000 if it is free now, and says whether it did. For a Carbon that started while
+/// Starts answering on the hub's port if it is free now, and says whether it did. For a Carbon that started while
 /// another one had the port: when that one goes, this one takes its place.
 pub async fn take_over(hub: Arc<Hub>) -> bool {
     match bind().await {

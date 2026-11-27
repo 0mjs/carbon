@@ -82,7 +82,7 @@ fn place_card(s: &State, index: usize, place: &Place, l: &Look) -> El {
         )
         .child(spacer())
         .child(text(count).font(sans(12.0, 400.0)).color(l.faint));
-    let mut card = raised(col().key(format!("card-{}", place.name)), l.card, 14.0, l)
+    let mut card = raised(col().key(format!("card-{}", place.name)), 14.0, l)
         .clip_rounded(14.0)
         .child(head);
     if place.on && !place.projects.is_empty() {

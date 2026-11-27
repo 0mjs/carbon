@@ -2,7 +2,7 @@
 //! what is listening.
 //!
 //! The rules it keeps:
-//!   3000         Carbon itself, always.
+//!   47213        Carbon itself, for the `carbon` command to reach it. Nothing a person opens.
 //!   3001–3003    one port per role: website, admin, pro. Starting an app puts it on its role's port and clears
 //!                whatever was there, so the same kind of thing is always at the same address.
 //!   3004–3019    everything else, one port each, handed out in order and kept while the app runs.
@@ -32,7 +32,11 @@ use crate::places;
 use crate::ports;
 use crate::stack;
 
-pub const HUB_PORT: u16 = 3000;
+/// Where the hub answers, for the `carbon` command and nothing else. Worked out to be a port nothing else wants:
+/// well clear of the ports dev tools pick by themselves (3000, 5173, 8080…) and of the 4100–4999 that apps are
+/// given, below 49152 where macOS hands out short-lived ports of its own, and not a port any well-known service
+/// is registered on. It is never shown or opened in a browser.
+pub const HUB_PORT: u16 = 47213;
 const MAX_LOG: usize = 800;
 
 #[derive(Clone, Serialize)]
@@ -717,7 +721,7 @@ impl Hub {
         let (spots, groups) = places::survey(&self.home, &self.roots());
         let mut apps = Vec::new();
         for spot in spots {
-            // Carbon doesn't list itself, or the page it is made of, or a project that was left out in setup
+            // Carbon doesn't list itself, or a project that was left out in setup
             if spot.dir.starts_with(&self.me) || config.hidden.contains(&spot.project_dir) {
                 continue;
             }
@@ -931,7 +935,7 @@ impl Hub {
     /// Frees a port: stops what Carbon started there, then anything else still holding it
     pub async fn stop(&self, port: u16) -> Result<(), String> {
         if port == HUB_PORT {
-            return Err("3000 is Carbon itself".into());
+            return Err(format!("{HUB_PORT} is Carbon itself"));
         }
         let mine = self.managed.lock().unwrap().remove(&port).map(|m| m.group);
         if let Some(group) = mine {

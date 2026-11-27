@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Builds Carbon.app into dist/. The page is built first because the app carries it inside.
+# Builds Carbon.app into dist/
 set -euo pipefail
 cd "$(dirname "$0")/.."
-(cd ui && bun install --silent && bun run build)
 cargo build --release -p carbon-desktop
 APP=dist/Carbon.app
 VERSION=$(grep -m1 '^version' desktop/Cargo.toml | cut -d'"' -f2)

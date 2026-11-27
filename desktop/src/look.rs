@@ -1,13 +1,13 @@
-//! How Carbon looks: deep black that lifts a little towards the top of each surface, a lit rim along its upper
-//! edge, white for the one thing to press, and green for what is live. It is the app's icon, carried through the
-//! window. There is one look, whatever the system's appearance.
+//! How Carbon looks: flat black, surfaces told apart by a step of grey and a hairline, white for the one thing to
+//! press, and green for what is live. No gradients and no glows: the pictures of the apps are the colour.
+//! There is one look, whatever the system's appearance.
 
 use carbon::{
     engine::{Agent, Project},
     stack::Tech,
 };
 use rune::{
-    Color, Cursor, Cx, El, Image, SurfaceFit, TextStyle,
+    Color, Cursor, Cx, El, Image, LoopSpec, SurfaceFit, TextStyle, Transition,
     color::{hex, oklch},
     el, row, text,
     tok::Family,
@@ -18,27 +18,27 @@ use crate::State;
 pub struct Look {
     /// The window itself, behind everything
     pub void: Color,
-    /// The sheet the page is on: lighter at its top than its bottom
-    pub sheet: (Color, Color),
+    /// The sheet the page is on
+    pub sheet: Color,
     /// A card on the sheet
-    pub card: (Color, Color),
+    pub card: Color,
     /// A quiet button, and the row chosen in the list
-    pub quiet: (Color, Color),
-    pub quiet_over: Color,
+    pub quiet: Color,
     /// Wells: text fields, the place a picture goes, output
     pub well: Color,
-    /// The lit rim of a surface: bright along the top, nearly gone at the bottom
-    pub rim: (Color, Color),
+    /// The hairline round a surface
     pub line: Color,
+    /// A hairline that has something to say: the one round a chosen row
+    pub edge: Color,
     pub ink: Color,
     pub soft: Color,
     pub faint: Color,
     /// A row under the pointer
     pub over: Color,
     /// The thing to press: white, with black on it
-    pub main: (Color, Color),
+    pub main: Color,
+    pub main_over: Color,
     pub on_main: Color,
-    pub shadow: Color,
     pub live: Color,
     pub starting: Color,
     pub bad: Color,
@@ -47,21 +47,20 @@ pub struct Look {
 pub fn look(_: &Cx<State>) -> Look {
     let grey = |code: &str| hex(code).expect("a colour written as hex");
     Look {
-        void: grey("#050506"),
-        sheet: (grey("#101012"), grey("#0a0a0b")),
-        card: (grey("#1b1b1e"), grey("#121214")),
-        quiet: (grey("#2a2a2e"), grey("#1c1c1f")),
-        quiet_over: grey("#323237"),
-        well: grey("#09090a"),
-        rim: (Color::WHITE.alpha(0.16), Color::WHITE.alpha(0.04)),
-        line: Color::WHITE.alpha(0.07),
+        void: grey("#060607"),
+        sheet: grey("#0b0b0c"),
+        card: grey("#111113"),
+        quiet: grey("#1b1b1e"),
+        well: grey("#070708"),
+        line: Color::WHITE.alpha(0.065),
+        edge: Color::WHITE.alpha(0.11),
         ink: grey("#f4f4f5"),
-        soft: grey("#a3a3ab"),
-        faint: grey("#6c6c75"),
-        over: Color::WHITE.alpha(0.05),
-        main: (grey("#ffffff"), grey("#d6d6dc")),
+        soft: grey("#a1a1aa"),
+        faint: grey("#63636c"),
+        over: Color::WHITE.alpha(0.045),
+        main: grey("#f4f4f5"),
+        main_over: grey("#ffffff"),
         on_main: grey("#09090a"),
-        shadow: Color::BLACK.alpha(0.55),
         live: oklch(0.8, 0.19, 150.0),
         starting: oklch(0.82, 0.15, 80.0),
         bad: oklch(0.7, 0.19, 25.0),
@@ -76,90 +75,86 @@ pub const fn mono(size: f32) -> TextStyle {
     TextStyle::new(size, 400.0).family(Family::SystemMono)
 }
 
-/// Makes an element a raised surface: shaded from its top, with a lit rim and a shadow under it
-pub fn raised(surface: El, shade: (Color, Color), radius: f32, l: &Look) -> El {
+/// A surface on the sheet: one step lighter than it, with a hairline round it
+pub fn raised(surface: El, radius: f32, l: &Look) -> El {
     surface
         .radius(radius)
         .continuous_corners()
-        .gradient(shade.0, shade.1)
-        .border_gradient(1.0, l.rim.0, l.rim.1)
-        .shadow(1.0, 2.0, l.shadow)
-        .shadow(14.0, 32.0, l.shadow)
+        .fill(l.card)
+        .border(1.0, l.line)
 }
 
-/// A raised surface that is switched on: its rim and the air around it take a colour (green for live)
-pub fn lit(surface: El, shade: (Color, Color), radius: f32, tone: Color, l: &Look) -> El {
-    surface
-        .radius(radius)
-        .continuous_corners()
-        .gradient(shade.0, shade.1)
-        .border_gradient(1.0, tone.alpha(0.55), tone.alpha(0.1))
-        .shadow(1.0, 2.0, l.shadow)
-        .shadow(14.0, 32.0, l.shadow)
-        .shadow(0.0, 26.0, tone.alpha(0.14))
+/// How a card arrives when the page it is on is opened: it rises a little into place, one after another
+pub fn arrive(card: El, index: usize) -> El {
+    card.transition(Transition::offset(0.0, 10.0).combined(Transition::opacity()))
+        .enter_delay((index.min(8) as f32) * 0.035)
 }
 
-/// Light behind something, far out of focus. The renderer only blurs so far, so a small blurred thing is drawn
-/// large: `light` is 48 points square, and `spread` is how many times larger it is drawn.
-pub fn aura(light: El, left: f32, top: f32, spread: f32, strength: f32) -> El {
-    el().size(48.0, 48.0)
-        .absolute(left, top)
-        .scale(spread)
-        .opacity(strength)
-        .child(light.blur(9.0))
-}
-
-/// The colour a surface is lit with for what is on it, if anything is
-pub fn tone(status: &str, l: &Look) -> Option<Color> {
-    match status {
-        "running" => Some(l.live),
-        "starting" => Some(l.starting),
-        "exited" => Some(l.bad),
-        _ => None,
-    }
-}
-
-/// A small light: green once answering, amber while starting, red if it fell over, hollow when off
+/// A small light: green once answering, amber while starting, red if it fell over, hollow when off. A live or
+/// starting one breathes, so what is up reads at a glance from across the window.
 pub fn dot(status: &str, l: &Look) -> El {
-    let light = el().size(8.0, 8.0).radius(4.0);
+    let light = el().size(7.0, 7.0).radius(3.5);
+    let breathing = |colour: Color, period: f64| {
+        el().size(15.0, 15.0)
+            .child(
+                el().size(15.0, 15.0)
+                    .radius(7.5)
+                    .absolute(0.0, 0.0)
+                    .fill(colour.alpha(0.28))
+                    .looping(LoopSpec::opacity(period, 0.0, 0.0, 1.0)),
+            )
+            .child(light.clone().absolute(4.0, 4.0).fill(colour))
+    };
     match status {
-        "running" => light.fill(l.live).shadow(0.0, 8.0, l.live.alpha(0.6)),
-        "starting" => light
-            .fill(l.starting)
-            .shadow(0.0, 8.0, l.starting.alpha(0.5)),
-        "exited" => light.fill(l.bad),
-        _ => light.border(1.5, l.faint),
+        "running" => breathing(l.live, 2.6),
+        "starting" => breathing(l.starting, 1.1),
+        "exited" => el().size(15.0, 15.0).center().child(light.fill(l.bad)),
+        _ => el()
+            .size(15.0, 15.0)
+            .center()
+            .child(light.border(1.5, l.faint)),
     }
 }
 
 pub enum Kind {
     /// The one thing to press
     Main,
+    /// A button with a face of its own
     Quiet,
+    /// Words that can be pressed, with a face only under the pointer
+    Ghost,
+}
+
+fn face_of(key: String, label: &str, kind: Kind, l: &Look) -> El {
+    let face = row()
+        .key(key)
+        .h(28.0)
+        .px(12.0)
+        .center()
+        .radius(8.0)
+        .continuous_corners();
+    match kind {
+        Kind::Main => face
+            .fill(l.main)
+            .hover(l.main_over)
+            .child(text(label).font(sans(12.5, 600.0)).color(l.on_main)),
+        Kind::Quiet => face
+            .fill(l.quiet)
+            .border(1.0, l.line)
+            .hover(Color::WHITE.alpha(0.05))
+            .child(text(label).font(sans(12.5, 500.0)).color(l.ink)),
+        Kind::Ghost => face
+            .hover(l.over)
+            .child(text(label).font(sans(12.5, 500.0)).color(l.soft))
+            .press_color(l.ink),
+    }
 }
 
 /// How a button looks, for the few whose press needs more than the state (a file dialog)
 pub fn plain_button(key: impl Into<String>, label: &str, kind: Kind, l: &Look) -> El {
-    let face = row()
-        .key(key.into())
-        .h(30.0)
-        .px(14.0)
-        .center()
-        .radius(9.0)
-        .press_scale(0.97)
-        .cursor(Cursor::Pointer);
-    match kind {
-        Kind::Main => face
-            .gradient(l.main.0, l.main.1)
-            .hover(l.main.0)
-            .shadow(0.0, 10.0, Color::WHITE.alpha(0.1))
-            .child(text(label).font(sans(12.5, 600.0)).color(l.on_main)),
-        Kind::Quiet => face
-            .gradient(l.quiet.0, l.quiet.1)
-            .border_gradient(1.0, l.rim.0, l.rim.1)
-            .hover(l.quiet_over)
-            .child(text(label).font(sans(12.5, 500.0)).color(l.ink)),
-    }
+    face_of(key.into(), label, kind, l)
+        .press_scale(0.96)
+        .cursor(Cursor::Pointer)
 }
 
 /// A button. A disabled one is dimmed and does nothing.
@@ -174,32 +169,17 @@ pub fn button(
     if enabled {
         return plain_button(key, label, kind, l).on_press(press);
     }
-    let face = row()
-        .key(key.into())
-        .h(30.0)
-        .px(14.0)
-        .center()
-        .radius(9.0)
-        .opacity(0.38);
-    match kind {
-        Kind::Main => face
-            .gradient(l.main.0, l.main.1)
-            .child(text(label).font(sans(12.5, 600.0)).color(l.on_main)),
-        Kind::Quiet => face
-            .gradient(l.quiet.0, l.quiet.1)
-            .border_gradient(1.0, l.rim.0, l.rim.1)
-            .child(text(label).font(sans(12.5, 500.0)).color(l.ink)),
-    }
+    face_of(key.into(), label, kind, l).opacity(0.35)
 }
 
 /// A word about a thing
 pub fn chip(label: &str, l: &Look) -> El {
     row()
         .h(20.0)
-        .px(8.0)
+        .px(7.0)
         .center()
-        .radius(7.0)
-        .fill(l.over)
+        .radius(6.0)
+        .border(1.0, l.line)
         .child(text(label).font(sans(11.0, 500.0)).color(l.soft))
 }
 
@@ -208,9 +188,9 @@ pub fn tick(s: &State, on: bool, l: &Look) -> El {
     let frame = row().size(18.0, 18.0).radius(6.0).center();
     match (on, s.icons.get("check")) {
         (true, Some(check)) => frame
-            .gradient(l.main.0, l.main.1)
+            .fill(l.main)
             .child(el().size(12.0, 12.0).pixels(check.pixels())),
-        (true, None) => frame.gradient(l.main.0, l.main.1),
+        (true, None) => frame.fill(l.main),
         (false, _) => frame.border(1.5, l.faint),
     }
 }
@@ -267,7 +247,7 @@ pub fn letter(title: &str, seed: &str, size: f32, round: f32) -> El {
         .radius(round)
         .continuous_corners()
         .center()
-        .gradient(oklch(0.66, 0.13, hue(seed)), oklch(0.5, 0.14, hue(seed)))
+        .fill(oklch(0.56, 0.12, hue(seed)))
         .child(
             text(first)
                 .font(sans((size * 0.46).round(), 600.0))
@@ -283,8 +263,8 @@ fn on_tile(image: Option<&Image>, size: f32, l: &Look) -> El {
         .radius((size * 0.28).round())
         .continuous_corners()
         .center()
-        .gradient(hex("#1f1f22").unwrap_or(l.well), l.well)
-        .border_gradient(1.0, l.rim.0, l.rim.1);
+        .fill(l.quiet)
+        .border(1.0, l.line);
     match image {
         Some(image) => tile.child(el().size(inside, inside).pixels(image.pixels())),
         None => tile,
@@ -302,42 +282,54 @@ pub fn tech_mark(s: &State, tech: &Tech, size: f32, l: &Look) -> El {
 }
 
 /// What stands in for a picture of an app that isn't running: the mark of the main thing it is built with (its
-/// project's face, failing that), in a pool of light of the mark's own colour
+/// project's face, failing that), quietly, on a wash of the mark's own colour
 pub fn poster(s: &State, tech: Option<&Tech>, fallback: El, l: &Look) -> El {
     let tone = tech
         .and_then(|tech| s.tones.get(tech.id))
         .copied()
         .unwrap_or(l.ink);
     let front = match tech.and_then(|tech| s.techs.get(tech.id)) {
-        Some(image) => on_tile(Some(image), 52.0, l).shadow(6.0, 18.0, l.shadow),
+        Some(image) => on_tile(Some(image), 44.0, l),
         None => fallback,
     };
     row()
         .center()
-        .radial_gradient(
-            [0.5, 0.5],
-            [230.0, 150.0],
-            [
-                (0.0, l.well.mix(tone, 0.2)),
-                (0.55, l.well.mix(tone, 0.055)),
-                (1.0, l.well),
-            ],
+        .fill(l.well)
+        .child(
+            el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .fill(tone.alpha(0.035)),
         )
-        .child(front)
+        .child(front.opacity(0.9))
+}
+
+/// The place a picture of an app goes. Its size comes from its width and `ratio` alone, never from the
+/// picture: what is shown inside is pinned to its edges, out of the layout, so a picture arriving (or one of any
+/// shape) leaves the card exactly as it was. A hairline is drawn over the top of whatever is in it.
+pub fn screen(content: El, ratio: f32, radius: f32, l: &Look) -> El {
+    el().w_full()
+        .min_w(0.0)
+        .aspect_ratio(ratio)
+        .radius(radius)
+        .continuous_corners()
+        .clip_rounded(radius)
+        .fill(l.well)
+        .child(content.pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)))
+        .child(
+            el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
+                .radius(radius)
+                .continuous_corners()
+                .border(1.0, l.line),
+        )
 }
 
 /// The main thing an app is built with, by mark and name
 pub fn tech_chip(s: &State, tech: &Tech, l: &Look) -> El {
     row()
         .h(22.0)
-        .pl(3.0)
-        .pr(9.0)
-        .gap(6.0)
+        .gap(7.0)
         .center_y()
-        .radius(7.0)
-        .fill(l.over)
-        .child(on_tile(s.techs.get(tech.id), 16.0, l))
-        .child(text(tech.name).font(sans(11.5, 500.0)).color(l.soft))
+        .child(on_tile(s.techs.get(tech.id), 20.0, l))
+        .child(text(tech.name).font(sans(12.0, 500.0)).color(l.soft))
 }
 
 /// Who an agent is at a glance: its harness's mark (its first letter where Carbon has no mark for it), with the
